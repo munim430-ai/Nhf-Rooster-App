@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Doctor, Ward, Demand, Holiday, Shift, ShiftStations } from '@/types'
+import type { Doctor, Ward, Demand, Holiday, Shift, ShiftStations, Settings, RosterMeta } from '@/types'
+import { SHIFTS } from '@/types'
 import type { Json } from '@/types/database'
 
 // ==================== DOCTORS ====================
@@ -406,4 +407,169 @@ export function useDutyBankHistory() {
   })
 
   return { rows, isLoading, upsertMonth }
+}
+
+// ==================== BACKUP RESTORE ====================
+export interface BackupData {
+  doctors?: Doctor[]
+  wards?: Ward[]
+  stations?: ShiftStations
+  demands?: Demand[]
+  holidays?: Holiday[]
+  settings?: Settings
+  meta?: RosterMeta
+}
+
+export interface RestoreResult {
+  counts: { doctors: number; wards: number; stations: number; demands: number; holidays: number }
+  settings?: Settings
+  meta?: RosterMeta
+}
+
+const newId = () =>
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : 'id' + Math.random().toString(36).slice(2) + Date.now().toString(36)
+
+/**
+ * Replaces all shared roster data with the contents of a backup file.
+ *
+ * This is destructive: it deletes the current doctors, wards, stations,
+ * demands, and holidays and re-inserts them from the backup, preserving the
+ * original IDs so that demand → doctor references stay intact. Validation runs
+ * before any deletion, so a malformed file aborts without touching the data.
+ */
+export function useRestoreBackup() {
+  const qc = useQueryClient()
+
+  return useMutation<RestoreResult, Error, BackupData>({
+    mutationFn: async (data: BackupData) => {
+      const doctors = data.doctors ?? []
+      const wards = data.wards ?? []
+      const demands = data.demands ?? []
+      const holidays = data.holidays ?? []
+      const stationsObj = data.stations ?? { morning: [], evening: [], night: [] }
+
+      if (!Array.isArray(doctors) || !Array.isArray(wards)) {
+        throw new Error('This file does not look like a roster backup (missing doctors or wards).')
+      }
+
+      // Keep original doctor IDs so demand references survive; only demands that
+      // point at a doctor present in the backup are restored (avoids FK errors).
+      const doctorIds = new Set(doctors.map(d => d.id).filter(Boolean))
+      const validDemands = demands.filter(dm => doctorIds.has(dm.doctorId))
+
+      const stationRows = SHIFTS.flatMap(shift =>
+        (stationsObj[shift] ?? []).map(s => ({
+          id: s.id || newId(),
+          label: s.label,
+          wards: s.wards ?? [],
+          needed: s.needed ?? 1,
+          shift,
+        }))
+      )
+
+      // Delete existing rows. Demands go first (FK to doctors); the filter
+      // `.not('id','is',null)` matches every row so the whole table is cleared.
+      const wipe = async (table: 'demands' | 'stations' | 'holidays' | 'doctors' | 'wards') => {
+        const { error } = await supabase.from(table).delete().not('id', 'is', null)
+        if (error) throw error
+      }
+      await wipe('demands')
+      await wipe('stations')
+      await wipe('holidays')
+      await wipe('doctors')
+      await wipe('wards')
+
+      if (wards.length) {
+        const { error } = await supabase.from('wards').insert(
+          wards.map(w => ({ id: w.id || newId(), name: w.name, group_name: w.group, active: w.active ?? true }))
+        )
+        if (error) throw error
+      }
+
+      if (doctors.length) {
+        const { error } = await supabase.from('doctors').insert(
+          doctors.map(d => ({
+            id: d.id || newId(),
+            name: d.name,
+            categories: d.categories ?? [],
+            secret: !!d.secret,
+            allowed_wards: d.allowedWards ?? [],
+            cath_eligible: !!d.cathEligible,
+            cath_quota: d.cathQuota ?? 0,
+            target: d.target ?? 23,
+            night_target: d.nightTarget ?? 6,
+            opd_min: d.opdMin ?? 0,
+            opd_max: d.opdMax ?? null,
+            duty_start_date: d.dutyStartDate ?? null,
+            duty_end_date: d.dutyEndDate ?? null,
+            active: d.active ?? true,
+          }))
+        )
+        if (error) throw error
+      }
+
+      if (stationRows.length) {
+        const { error } = await supabase.from('stations').insert(stationRows)
+        if (error) throw error
+      }
+
+      if (holidays.length) {
+        const { error } = await supabase.from('holidays').insert(
+          holidays.map(h => ({ id: h.id || newId(), date: h.date, label: h.label, year: h.year, month: h.month }))
+        )
+        if (error) throw error
+      }
+
+      if (validDemands.length) {
+        const { error } = await supabase.from('demands').insert(
+          validDemands.map(dm => ({
+            id: dm.id || newId(),
+            doctor_id: dm.doctorId,
+            kind: dm.kind,
+            scope: dm.scope,
+            shift: dm.shift,
+            pair: dm.pair,
+            ward_name: dm.wardName,
+            day_of_week: dm.dayOfWeek,
+            date: dm.date,
+            start_date: dm.startDate,
+            end_date: dm.endDate,
+            note: dm.note,
+          }))
+        )
+        if (error) throw error
+      }
+
+      if (data.settings) {
+        const { error } = await supabase.from('app_settings').upsert(
+          {
+            key: 'hospital_config',
+            value: { name: data.settings.hospitalName, preparedBy: data.settings.preparedByName } as Json,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'key' }
+        )
+        if (error) throw error
+      }
+
+      return {
+        counts: {
+          doctors: doctors.length,
+          wards: wards.length,
+          stations: stationRows.length,
+          demands: validDemands.length,
+          holidays: holidays.length,
+        },
+        settings: data.settings,
+        meta: data.meta,
+      }
+    },
+    onSuccess: () => {
+      ;['doctors', 'wards', 'stations', 'demands', 'holidays', 'app_settings'].forEach(key =>
+        qc.invalidateQueries({ queryKey: [key] })
+      )
+    },
+  })
 }

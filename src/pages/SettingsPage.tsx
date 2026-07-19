@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useMakerPasswords } from '@/hooks/useMakerPasswords'
-import { useAppSetting } from '@/hooks/useData'
-import { Shield, Plus, Trash2, X, Copy, Check } from 'lucide-react'
+import { useAppSetting, useRestoreBackup, type BackupData } from '@/hooks/useData'
+import { Shield, Plus, Trash2, X, Copy, Check, Upload, Download } from 'lucide-react'
 
 interface HospitalConfig {
   name: string
@@ -11,9 +11,64 @@ interface HospitalConfig {
 }
 
 export default function SettingsPage() {
-  const { doctors, wards, stations, demands, holidays, settings, meta, setSettings } = useAppStore()
+  const { doctors, wards, stations, demands, holidays, settings, meta, setSettings, setMeta } = useAppStore()
   const { isMaster } = useAuth()
   const { passwords, createPassword, deactivatePassword, deletePassword } = useMakerPasswords()
+  const restoreBackup = useRestoreBackup()
+  const restoreInputRef = useRef<HTMLInputElement>(null)
+  const [restoreMsg, setRestoreMsg] = useState('')
+
+  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // let the same file be chosen again later
+    if (!file) return
+    setRestoreMsg('')
+
+    let parsed: BackupData
+    try {
+      parsed = JSON.parse(await file.text())
+    } catch {
+      setRestoreMsg('Could not read that file — it is not valid JSON.')
+      return
+    }
+    if (!parsed || !Array.isArray(parsed.doctors) || !Array.isArray(parsed.wards)) {
+      setRestoreMsg('This file does not look like a roster backup.')
+      return
+    }
+
+    const stationsObj = parsed.stations
+    const stationCount = stationsObj
+      ? (['morning', 'evening', 'night'] as const).reduce((n, s) => n + (stationsObj[s]?.length ?? 0), 0)
+      : 0
+    const ok = window.confirm(
+      'Restore this backup?\n\n' +
+      'This REPLACES all current data for everyone with:\n' +
+      `• ${parsed.doctors.length} doctors\n` +
+      `• ${parsed.wards.length} wards\n` +
+      `• ${stationCount} stations\n` +
+      `• ${parsed.demands?.length ?? 0} demands\n` +
+      `• ${parsed.holidays?.length ?? 0} holidays\n\n` +
+      'The current data will be permanently deleted. This cannot be undone.'
+    )
+    if (!ok) return
+
+    setRestoreMsg('Restoring...')
+    try {
+      const result = await restoreBackup.mutateAsync(parsed)
+      if (result.settings) {
+        setSettings({
+          ...settings,
+          hospitalName: result.settings.hospitalName,
+          preparedByName: result.settings.preparedByName,
+        })
+      }
+      if (result.meta && result.meta.year && result.meta.month) setMeta(result.meta)
+      const c = result.counts
+      setRestoreMsg(`Restored ${c.doctors} doctors, ${c.wards} wards, ${c.stations} stations, ${c.demands} demands, ${c.holidays} holidays.`)
+    } catch (err) {
+      setRestoreMsg(err instanceof Error ? `Restore failed: ${err.message}` : 'Restore failed.')
+    }
+  }
   const { value: hospitalConfig, isLoading: configLoading, saveSetting: saveHospitalConfig } = useAppSetting<HospitalConfig>(
     'hospital_config',
     { name: settings.hospitalName, preparedBy: settings.preparedByName }
@@ -235,9 +290,10 @@ export default function SettingsPage() {
       <div className="bg-white rounded-xl border border-[#c9d8d1] p-5">
         <h2 className="text-sm font-semibold text-[#16221f] mb-3">Backup & Restore</h2>
         <p className="text-sm text-[#5c6f6a] mb-4">
-          Download your data as a JSON file for safekeeping, or restore from a previous backup.
+          Download your data as a JSON file for safekeeping, or restore a previous backup file to
+          replace the current data.
         </p>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button
             onClick={() => {
               const data = JSON.stringify({ doctors, wards, stations, demands, holidays, settings, meta }, null, 2)
@@ -249,10 +305,35 @@ export default function SettingsPage() {
               a.click()
               URL.revokeObjectURL(url)
             }}
-            className="px-4 py-2 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9]"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9]"
           >
+            <Download className="w-4 h-4" />
             Download Backup
           </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleRestoreFile}
+            className="hidden"
+          />
+          <button
+            onClick={() => restoreInputRef.current?.click()}
+            disabled={restoreBackup.isPending}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#c9d8d1] text-[#5c6f6a] text-sm font-medium hover:bg-[#eef3f0] disabled:opacity-50"
+          >
+            <Upload className="w-4 h-4" />
+            {restoreBackup.isPending ? 'Restoring...' : 'Restore Backup'}
+          </button>
+        </div>
+        {restoreMsg && (
+          <p className={`text-xs mt-3 ${restoreMsg.startsWith('Restore failed') || restoreMsg.includes('not ') ? 'text-[#a83a2c]' : 'text-[#5c6f6a]'}`}>
+            {restoreMsg}
+          </p>
+        )}
+        <div className="text-xs text-[#b5602a] bg-[#f6e3d3] rounded-lg px-3 py-2 mt-4">
+          Restoring replaces all doctors, wards, stations, demands, and holidays for everyone. Download a
+          fresh backup first if you might need the current data.
         </div>
       </div>
     </div>
