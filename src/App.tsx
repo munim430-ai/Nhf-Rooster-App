@@ -36,10 +36,10 @@ export default function App() {
   const { currentNav, setCurrentNav, setDoctors, setWards, setDemands, setHolidays } = useAppStore()
 
   // Load all data from Supabase when authenticated
-  const { data: dbDoctors } = useDoctors()
-  const { data: dbWards } = useWards()
-  const { data: dbDemands } = useDemands()
-  const { data: dbHolidays } = useHolidays()
+  const { doctors: dbDoctors } = useDoctors()
+  const { wards: dbWards } = useWards()
+  const { demands: dbDemands } = useDemands()
+  const { holidays: dbHolidays } = useHolidays()
 
   useEffect(() => {
     if (dbDoctors) setDoctors(dbDoctors)

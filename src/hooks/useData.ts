@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { Doctor, Ward, Demand, Holiday } from '@/types'
+import type { Json } from '@/types/database'
 
 // ==================== DOCTORS ====================
 export function useDoctors() {
@@ -264,8 +265,8 @@ export function useRosterSnapshots() {
       year: number
       month: number
       days: number
-      roster: Record<string, unknown>
-      effective_stations?: Record<string, unknown> | null
+      roster: Json
+      effective_stations?: Json | null
       warnings?: string[]
       notes?: string
       generated_by?: string
