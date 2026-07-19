@@ -1,8 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// Fallback to the project's public URL/anon key if the VITE_ env vars aren't
+// injected at build time (e.g. Vercel Project Settings not yet configured).
+// The anon key is safe to expose client-side by design.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://bonxvzzmozahvnxsojwl.supabase.co'
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvbnh2enptb3phaHZueHNvandsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0NzMxMTQsImV4cCI6MjEwMDA0OTExNH0.hGsOZ8dDBsX1bdgPnYfmzsWVbLpZ9NSCGctkifbc5XA'
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
