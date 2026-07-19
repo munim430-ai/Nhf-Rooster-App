@@ -4,10 +4,14 @@ import { useRosterSnapshots, useDutyBankHistory } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
 import { generateRoster } from '@/lib/rosterGenerator'
 import { computeRosterStats } from '@/lib/rosterStats'
+import { exportRosterExcel, exportRosterDocx, type RosterExportContext } from '@/lib/rosterExport'
 import { monthKey, isHolidayDay, stationDisplayLabel } from '@/lib/utils'
 import { MONTHS, SHIFTS, SHIFT_LABEL } from '@/types'
 import type { Shift } from '@/types'
-import { Play, Save, FileDown, Printer, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  Play, Save, FileDown, FileSpreadsheet, FileText, Printer,
+  AlertTriangle, ChevronDown, ChevronUp,
+} from 'lucide-react'
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -27,7 +31,7 @@ export default function GeneratePage() {
   const [showWarnings, setShowWarnings] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
+  const [exporting, setExporting] = useState<'pdf' | 'excel' | 'docx' | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
 
   const printRef = useRef<HTMLDivElement>(null)
@@ -112,9 +116,48 @@ export default function GeneratePage() {
     }
   }
 
+  const buildExportContext = (): RosterExportContext => ({
+    doctors,
+    roster: roster!,
+    effectiveStations: effectiveStations!,
+    holidays,
+    year: meta.year,
+    month: meta.month,
+    days: meta.days,
+    hospitalName: settings.hospitalName,
+    preparedByName: settings.preparedByName,
+    warnings,
+  })
+
+  const handleExportExcel = async () => {
+    if (!roster || !effectiveStations) return
+    setExporting('excel')
+    setSaveMsg('')
+    try {
+      await exportRosterExcel(buildExportContext())
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `Excel export failed: ${err.message}` : 'Excel export failed.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleExportDocx = async () => {
+    if (!roster || !effectiveStations) return
+    setExporting('docx')
+    setSaveMsg('')
+    try {
+      await exportRosterDocx(buildExportContext())
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `Word export failed: ${err.message}` : 'Word export failed.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const handleExportPdf = async () => {
     if (!roster || !effectiveStations || !printRef.current) return
-    setIsExporting(true)
+    setExporting('pdf')
     const originalTab = shiftTab
     try {
       const { default: jsPDF } = await import('jspdf')
@@ -146,7 +189,7 @@ export default function GeneratePage() {
       pdf.save(`roster-${meta.year}-${String(meta.month).padStart(2, '0')}.pdf`)
     } finally {
       setShiftTab(originalTab)
-      setIsExporting(false)
+      setExporting(null)
     }
   }
 
@@ -158,7 +201,7 @@ export default function GeneratePage() {
         <h1 className="text-2xl font-semibold text-[#0a4f42]" style={{ fontFamily: 'var(--font-serif)' }}>
           Generate & Export
         </h1>
-        <p className="text-sm text-[#5c6f6a] mt-1">Build the month's roster and export it as a PDF</p>
+        <p className="text-sm text-[#5c6f6a] mt-1">Build the month's roster and export it as PDF, Excel, or Word</p>
       </div>
 
       {/* Month selector + pre-flight */}
@@ -232,11 +275,27 @@ export default function GeneratePage() {
             </button>
             <button
               onClick={handleExportPdf}
-              disabled={isExporting}
+              disabled={exporting !== null}
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
             >
               <FileDown className="w-4 h-4" />
-              {isExporting ? 'Exporting...' : 'Export PDF'}
+              {exporting === 'pdf' ? 'Exporting...' : 'Export PDF'}
+            </button>
+            <button
+              onClick={handleExportExcel}
+              disabled={exporting !== null}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              {exporting === 'excel' ? 'Exporting...' : 'Export Excel'}
+            </button>
+            <button
+              onClick={handleExportDocx}
+              disabled={exporting !== null}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
+            >
+              <FileText className="w-4 h-4" />
+              {exporting === 'docx' ? 'Exporting...' : 'Export Word'}
             </button>
             <button
               onClick={() => window.print()}
