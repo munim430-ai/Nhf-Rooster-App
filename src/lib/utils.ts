@@ -28,9 +28,9 @@ export function monthKeyLabel(key: string): string {
   return `${months[m - 1]} ${y}`
 }
 
-export function isHolidayDay(day: number, year: number, month: number, holidays: { date: number }[]): boolean {
+export function isHolidayDay(day: number, year: number, month: number, holidays: { date: number; year: number; month: number }[]): boolean {
   const wd = new Date(year, month - 1, day).getDay()
-  return wd === 5 || holidays.some(h => h.date === day)
+  return wd === 5 || holidays.some(h => h.date === day && h.year === year && h.month === month)
 }
 
 export function wardDisplayLabel(name: string): string {

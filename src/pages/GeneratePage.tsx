@@ -1,7 +1,315 @@
-export default function PlaceholderPage() {
+import { useRef, useState } from 'react'
+import { useAppStore } from '@/store/useAppStore'
+import { useRosterSnapshots, useDutyBankHistory } from '@/hooks/useData'
+import { useAuth } from '@/hooks/useAuth'
+import { generateRoster } from '@/lib/rosterGenerator'
+import { computeRosterStats } from '@/lib/rosterStats'
+import { monthKey, isHolidayDay, stationDisplayLabel } from '@/lib/utils'
+import { MONTHS, SHIFTS, SHIFT_LABEL } from '@/types'
+import type { Shift } from '@/types'
+import { Play, Save, FileDown, Printer, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+export default function GeneratePage() {
+  const {
+    doctors, wards, stations, demands, holidays, meta, setMeta,
+    roster, effectiveStations, warnings, setRoster, setEffectiveStations, setWarnings,
+    fridayNightHistory, setFridayNightHistory, dutyBank, setDutyBank, settings,
+  } = useAppStore()
+  const { makerLabel, isMaster } = useAuth()
+  const { saveSnapshot } = useRosterSnapshots()
+  const { upsertMonth } = useDutyBankHistory()
+
+  const [shiftTab, setShiftTab] = useState<Shift>('morning')
+  const [showWarnings, setShowWarnings] = useState(true)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+
+  const printRef = useRef<HTMLDivElement>(null)
+
+  const activeDoctors = doctors.filter(d => d.active)
+  const daysInMonth = new Date(meta.year, meta.month, 0).getDate()
+  const years = Array.from({ length: 5 }, (_, i) => meta.year - 2 + i)
+  const totalStations = SHIFTS.reduce((sum, s) => sum + stations[s].length, 0)
+  const canGenerate = activeDoctors.length > 0 && totalStations > 0
+
+  const handleGenerate = async () => {
+    setIsGenerating(true)
+    setSaveMsg('')
+    await sleep(30) // let the button show its busy state before the sync work blocks the thread
+    const result = generateRoster(
+      doctors, stations, demands, holidays,
+      meta.year, meta.month, daysInMonth,
+      fridayNightHistory, dutyBank
+    )
+    setRoster(result.roster)
+    setEffectiveStations(result.effectiveStations)
+    setWarnings(result.warnings)
+    setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
+    setFridayNightHistory({ ...fridayNightHistory, [monthKey(meta.year, meta.month)]: result.fridayNightCount })
+    setIsGenerating(false)
+  }
+
+  const handleSave = async () => {
+    if (!roster || !effectiveStations) return
+    setIsSaving(true)
+    setSaveMsg('')
+    try {
+      await saveSnapshot.mutateAsync({
+        year: meta.year,
+        month: meta.month,
+        days: meta.days,
+        roster: roster as unknown as import('@/types/database').Json,
+        effective_stations: effectiveStations as unknown as import('@/types/database').Json,
+        warnings,
+        generated_by: isMaster ? 'Master' : (makerLabel || 'Roster Maker'),
+      })
+
+      // Recompute duty bank for this month and persist it, so next month's
+      // generation knows who ran over their target.
+      const stats = computeRosterStats(roster, effectiveStations)
+      const key = monthKey(meta.year, meta.month)
+      const prevKey = meta.month === 1 ? monthKey(meta.year - 1, 12) : monthKey(meta.year, meta.month - 1)
+      const prevMonthBank = dutyBank[prevKey] || {}
+
+      const entries = activeDoctors.map(d => {
+        const prevBalance = prevMonthBank[d.id]?.balance || 0
+        const effectiveTarget = Math.max(0, d.target - (prevBalance > 0 ? prevBalance : 0))
+        const assigned = stats[d.id]?.assigned || 0
+        return {
+          month_key: key,
+          doctor_id: d.id,
+          base_target: d.target,
+          effective_target: effectiveTarget,
+          assigned,
+          balance: assigned - effectiveTarget,
+        }
+      })
+
+      await upsertMonth.mutateAsync(entries)
+
+      const monthBank: Record<string, { baseTarget: number; effectiveTarget: number; assigned: number; balance: number }> = {}
+      entries.forEach(e => {
+        monthBank[e.doctor_id] = {
+          baseTarget: e.base_target,
+          effectiveTarget: e.effective_target,
+          assigned: e.assigned,
+          balance: e.balance,
+        }
+      })
+      setDutyBank({ ...dutyBank, [key]: monthBank })
+
+      setSaveMsg('Saved.')
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? `Save failed: ${err.message}` : 'Save failed.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleExportPdf = async () => {
+    if (!roster || !effectiveStations || !printRef.current) return
+    setIsExporting(true)
+    const originalTab = shiftTab
+    try {
+      const { default: jsPDF } = await import('jspdf')
+      const { default: html2canvas } = await import('html2canvas')
+      const pdf = new jsPDF('p', 'pt', 'a4')
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+
+      for (let i = 0; i < SHIFTS.length; i++) {
+        setShiftTab(SHIFTS[i])
+        await sleep(60)
+        const canvas = await html2canvas(printRef.current, { scale: 2, backgroundColor: '#ffffff' })
+        const imgData = canvas.toDataURL('image/png')
+        const imgWidth = pageWidth
+        const imgHeight = (canvas.height * imgWidth) / canvas.width
+        let heightLeft = imgHeight
+        let position = 0
+        if (i > 0) pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+        heightLeft -= pageHeight
+        while (heightLeft > 0) {
+          position = heightLeft - imgHeight
+          pdf.addPage()
+          pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+          heightLeft -= pageHeight
+        }
+      }
+
+      pdf.save(`roster-${meta.year}-${String(meta.month).padStart(2, '0')}.pdf`)
+    } finally {
+      setShiftTab(originalTab)
+      setIsExporting(false)
+    }
+  }
+
+  const doctorName = (id: string) => doctors.find(d => d.id === id)?.name || '—'
+
   return (
-    <div className="flex items-center justify-center h-64">
-      <p className="text-[#5c6f6a]">This section is coming soon.</p>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-[#0a4f42]" style={{ fontFamily: 'var(--font-serif)' }}>
+          Generate & Export
+        </h1>
+        <p className="text-sm text-[#5c6f6a] mt-1">Build the month's roster and export it as a PDF</p>
+      </div>
+
+      {/* Month selector + pre-flight */}
+      <div className="bg-white rounded-xl border border-[#c9d8d1] p-5 mb-4">
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <select
+            value={meta.month}
+            onChange={e => setMeta({ ...meta, month: parseInt(e.target.value) })}
+            className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm"
+          >
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+          <select
+            value={meta.year}
+            onChange={e => setMeta({ ...meta, year: parseInt(e.target.value) })}
+            className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm"
+          >
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <button
+            onClick={handleGenerate}
+            disabled={!canGenerate || isGenerating}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] disabled:opacity-50 sm:ml-auto"
+          >
+            <Play className="w-4 h-4" />
+            {isGenerating ? 'Generating...' : roster ? 'Regenerate Roster' : 'Generate Roster'}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-[#5c6f6a]">
+          <div>{activeDoctors.length} active doctors</div>
+          <div>{totalStations} stations</div>
+          <div>{demands?.length || 0} demands</div>
+          <div>{holidays.filter(h => h.year === meta.year && h.month === meta.month).length} holidays this month</div>
+        </div>
+        {!canGenerate && (
+          <p className="text-xs text-[#a83a2c] mt-3">
+            Add at least one active doctor and one shift-requirement station before generating.
+          </p>
+        )}
+      </div>
+
+      {roster && effectiveStations && (
+        <>
+          {/* Warnings */}
+          {warnings.length > 0 && (
+            <div className="bg-[#f6e3d3] rounded-xl border border-[#e0c299] p-4 mb-4">
+              <button onClick={() => setShowWarnings(v => !v)} className="flex items-center justify-between w-full">
+                <span className="flex items-center gap-2 text-sm font-semibold text-[#6b4c19]">
+                  <AlertTriangle className="w-4 h-4" />
+                  {warnings.length} warning{warnings.length === 1 ? '' : 's'} to review
+                </span>
+                {showWarnings ? <ChevronUp className="w-4 h-4 text-[#6b4c19]" /> : <ChevronDown className="w-4 h-4 text-[#6b4c19]" />}
+              </button>
+              {showWarnings && (
+                <ul className="mt-3 space-y-1.5 text-xs text-[#6b4c19] max-h-64 overflow-y-auto">
+                  {warnings.map((w, i) => <li key={i}>&bull; {w}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] disabled:opacity-50"
+            >
+              <Save className="w-4 h-4" />
+              {isSaving ? 'Saving...' : 'Save Roster'}
+            </button>
+            <button
+              onClick={handleExportPdf}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
+            >
+              <FileDown className="w-4 h-4" />
+              {isExporting ? 'Exporting...' : 'Export PDF'}
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#c9d8d1] text-[#5c6f6a] text-sm font-medium hover:bg-[#eef3f0]"
+            >
+              <Printer className="w-4 h-4" />
+              Print
+            </button>
+            {saveMsg && <span className="text-xs text-[#5c6f6a]">{saveMsg}</span>}
+          </div>
+
+          {/* Shift tabs */}
+          <div className="flex gap-2 mb-4 border-b border-[#c9d8d1] print:hidden">
+            {SHIFTS.map(s => (
+              <button
+                key={s}
+                onClick={() => setShiftTab(s)}
+                className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  shiftTab === s ? 'border-[#0f6e5c] text-[#0f6e5c]' : 'border-transparent text-[#5c6f6a] hover:text-[#16221f]'
+                }`}
+              >
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Printable roster */}
+          <div ref={printRef} className="print-area bg-white rounded-xl border border-[#c9d8d1] p-5">
+            <div className="text-center mb-4">
+              <div className="text-sm font-semibold text-[#0a4f42]">{settings.hospitalName}</div>
+              <div className="text-xs text-[#5c6f6a] mt-1">
+                Duty Roster — {SHIFT_LABEL[shiftTab]} — {MONTHS[meta.month - 1]} {meta.year}
+              </div>
+              {settings.preparedByName && (
+                <div className="text-[10px] text-[#5c6f6a] mt-1">Prepared by {settings.preparedByName}</div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {Array.from({ length: meta.days }, (_, i) => i + 1).map(day => {
+                const dayStations = effectiveStations[day]?.[shiftTab] || []
+                const weekday = new Date(meta.year, meta.month - 1, day).toLocaleDateString('en-US', { weekday: 'short' })
+                const holiday = isHolidayDay(day, meta.year, meta.month, holidays)
+                return (
+                  <div key={day} className="border-b border-[#eef3f0] pb-2 last:border-0">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-xs font-semibold text-[#16221f]">Day {day} ({weekday})</span>
+                      {holiday && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f7dfd9] text-[#a83a2c] font-medium">Holiday</span>}
+                    </div>
+                    {dayStations.length === 0 ? (
+                      <p className="text-xs text-[#5c6f6a] italic">No stations staffed this shift.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                        {dayStations.map(st => {
+                          const ids = roster[day]?.[shiftTab]?.[st.id] || []
+                          return (
+                            <div key={st.id} className="text-xs flex justify-between gap-2">
+                              <span className="text-[#5c6f6a]">{stationDisplayLabel(st)}</span>
+                              <span className="text-[#16221f] font-medium text-right">
+                                {ids.length > 0 ? ids.map(doctorName).join(', ') : '—'}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react'
-import { useAppStore } from '@/store/useAppStore'
+import React, { useEffect, useRef } from 'react'
+import { useAppStore, defaultStations } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
-import { useDoctors, useWards, useDemands, useHolidays } from '@/hooks/useData'
+import { useDoctors, useWards, useDemands, useHolidays, useStations } from '@/hooks/useData'
 import LoginScreen from '@/components/LoginScreen'
 import BottomNav from '@/components/BottomNav'
 import Sidebar from '@/components/Sidebar'
@@ -33,13 +33,15 @@ const navMap: Record<string, React.FC> = {
 
 export default function App() {
   const { isAuthenticated } = useAuth()
-  const { currentNav, setCurrentNav, setDoctors, setWards, setDemands, setHolidays } = useAppStore()
+  const { currentNav, setCurrentNav, setDoctors, setWards, setDemands, setHolidays, setStations } = useAppStore()
 
   // Load all data from Supabase when authenticated
   const { doctors: dbDoctors } = useDoctors()
   const { wards: dbWards } = useWards()
   const { demands: dbDemands } = useDemands()
   const { holidays: dbHolidays } = useHolidays()
+  const { stations: dbStations, stationRows, isLoading: stationsLoading, createStation } = useStations()
+  const seededStations = useRef(false)
 
   useEffect(() => {
     if (dbDoctors) setDoctors(dbDoctors)
@@ -56,6 +58,26 @@ export default function App() {
   useEffect(() => {
     if (dbHolidays) setHolidays(dbHolidays)
   }, [dbHolidays, setHolidays])
+
+  useEffect(() => {
+    if (stationRows && stationRows.length > 0) setStations(dbStations)
+  }, [stationRows, setStations])
+
+  // One-time seed: if the stations table is empty, populate it from the built-in defaults
+  useEffect(() => {
+    if (stationsLoading || seededStations.current) return
+    if (stationRows && stationRows.length === 0) {
+      seededStations.current = true
+      const all = [
+        ...defaultStations.morning.map(s => ({ ...s, shift: 'morning' as const })),
+        ...defaultStations.evening.map(s => ({ ...s, shift: 'evening' as const })),
+        ...defaultStations.night.map(s => ({ ...s, shift: 'night' as const })),
+      ]
+      all.forEach(s => {
+        createStation.mutate({ label: s.label, wards: s.wards, needed: s.needed, shift: s.shift })
+      })
+    }
+  }, [stationsLoading, stationRows, createStation])
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {

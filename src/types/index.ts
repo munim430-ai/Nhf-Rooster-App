@@ -63,6 +63,8 @@ export interface Holiday {
   id: string;
   date: number;
   label: string;
+  year: number;
+  month: number;
   created_at?: string;
 }
 

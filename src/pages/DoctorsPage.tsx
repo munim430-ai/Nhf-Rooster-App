@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
-import { uid } from '@/lib/utils'
+import { useDoctors } from '@/hooks/useData'
 import type { Doctor, Category } from '@/types'
 import {
   Plus, Search, Edit3, Trash2, ChevronDown, ChevronUp,
@@ -23,8 +23,9 @@ const defaultTarget = (categories: Category[]) => {
 }
 
 export default function DoctorsPage() {
-  const { doctors, wards, setDoctors, secretUnlocked, setSecretUnlocked } = useAppStore()
+  const { doctors, wards, secretUnlocked, setSecretUnlocked } = useAppStore()
   const { isMaster } = useAuth()
+  const { createDoctor, updateDoctor, deleteDoctor: deleteDoctorMutation } = useDoctors()
 
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState<Category | ''>('')
@@ -96,9 +97,7 @@ export default function DoctorsPage() {
     if (formCats.length === 0) return
     if (formStart && formEnd && formEnd < formStart) return
 
-    const opdRange = defaultOpdRange(formCats)
-    const newDoc: Doctor = {
-      id: editingId || uid(),
+    const base = {
       name: formName.trim(),
       categories: [...formCats],
       secret: formSecret,
@@ -111,25 +110,25 @@ export default function DoctorsPage() {
       opdMax: formOpdMax,
       dutyStartDate: formStart || null,
       dutyEndDate: formEnd || null,
-      active: true,
     }
 
     if (editingId) {
-      setDoctors(doctors.map(d => d.id === editingId ? newDoc : d))
+      const existing = doctors.find(d => d.id === editingId)
+      updateDoctor.mutate({ id: editingId, active: existing?.active ?? true, ...base })
     } else {
-      setDoctors([...doctors, newDoc])
+      createDoctor.mutate({ ...base, active: true })
     }
     setShowAdd(false)
     resetForm()
   }
 
-  const toggleActive = (id: string) => {
-    setDoctors(doctors.map(d => d.id === id ? { ...d, active: !d.active } : d))
+  const toggleActive = (doc: Doctor) => {
+    updateDoctor.mutate({ ...doc, active: !doc.active })
   }
 
   const deleteDoctor = (id: string) => {
     if (confirm('Delete this doctor? This cannot be undone.')) {
-      setDoctors(doctors.filter(d => d.id !== id))
+      deleteDoctorMutation.mutate(id)
     }
   }
 
@@ -267,7 +266,7 @@ export default function DoctorsPage() {
                   <Edit3 className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => toggleActive(doc.id)}
+                  onClick={() => toggleActive(doc)}
                   className={`p-2 rounded-lg text-xs font-medium ${
                     doc.active ? 'text-[#5c6f6a] hover:bg-[#f7dfd9] hover:text-[#a83a2c]' : 'text-[#0f6e5c] hover:bg-[#dcefe9]'
                   }`}

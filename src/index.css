@@ -37,3 +37,16 @@
   }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
 }
+
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+}
