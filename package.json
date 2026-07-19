@@ -42,5 +42,8 @@
     "typescript-eslint": "^8.0.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
