@@ -26,6 +26,7 @@ export interface AppState {
   isAuthenticated: boolean
   authRole: 'master' | 'maker' | null
   makerLabel: string | null
+  isOnline: boolean
 }
 
 export interface AppActions {
@@ -46,6 +47,7 @@ export interface AppActions {
   setCurrentNav: (nav: string) => void
   setIsLoading: (v: boolean) => void
   setAuthenticated: (v: boolean, role?: 'master' | 'maker', label?: string | null) => void
+  setIsOnline: (v: boolean) => void
   resetAll: () => void
 }
 
@@ -180,6 +182,7 @@ const initialState: Omit<AppState, keyof AppActions> = {
   isAuthenticated: false,
   authRole: null,
   makerLabel: null,
+  isOnline: true,
 }
 
 export const useAppStore = create<AppState & AppActions>()(
@@ -204,18 +207,13 @@ export const useAppStore = create<AppState & AppActions>()(
       setIsLoading: (isLoading) => set({ isLoading }),
       setAuthenticated: (isAuthenticated, authRole, makerLabel) =>
         set({ isAuthenticated, authRole: authRole ?? null, makerLabel: makerLabel ?? null }),
+      setIsOnline: (isOnline) => set({ isOnline }),
       resetAll: () => set({ ...initialState, isAuthenticated: false, authRole: null, makerLabel: null }),
     }),
     {
       name: 'nhf-roster-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        doctors: state.doctors,
-        wards: state.wards,
-        stations: state.stations,
-        demands: state.demands,
-        holidays: state.holidays,
-        notes: state.notes,
         settings: state.settings,
         meta: state.meta,
         roster: state.roster,
@@ -225,6 +223,7 @@ export const useAppStore = create<AppState & AppActions>()(
         dutyBank: state.dutyBank,
         secretUnlocked: state.secretUnlocked,
         currentNav: state.currentNav,
+        notes: state.notes,
       }),
     }
   )

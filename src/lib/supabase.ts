@@ -13,3 +13,13 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
 })
 
 export type Tables = Database['public']['Tables']
+
+// Helper to check if Supabase is reachable
+export async function healthCheck(): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('wards').select('id').limit(1)
+    return !error
+  } catch {
+    return false
+  }
+}

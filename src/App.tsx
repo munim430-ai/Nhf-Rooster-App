@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
+import { useDoctors, useWards, useDemands, useHolidays } from '@/hooks/useData'
 import LoginScreen from '@/components/LoginScreen'
 import BottomNav from '@/components/BottomNav'
 import Sidebar from '@/components/Sidebar'
@@ -14,7 +16,6 @@ import SummaryPage from '@/pages/SummaryPage'
 import DutyBankPage from '@/pages/DutyBankPage'
 import NotesPage from '@/pages/NotesPage'
 import SettingsPage from '@/pages/SettingsPage'
-import { useEffect } from 'react'
 
 const navMap: Record<string, React.FC> = {
   dashboard: DashboardPage,
@@ -32,10 +33,31 @@ const navMap: Record<string, React.FC> = {
 
 export default function App() {
   const { isAuthenticated } = useAuth()
-  const { currentNav, setCurrentNav } = useAppStore()
+  const { currentNav, setCurrentNav, setDoctors, setWards, setDemands, setHolidays } = useAppStore()
+
+  // Load all data from Supabase when authenticated
+  const { data: dbDoctors } = useDoctors()
+  const { data: dbWards } = useWards()
+  const { data: dbDemands } = useDemands()
+  const { data: dbHolidays } = useHolidays()
 
   useEffect(() => {
-    // Register service worker for PWA
+    if (dbDoctors) setDoctors(dbDoctors)
+  }, [dbDoctors, setDoctors])
+
+  useEffect(() => {
+    if (dbWards) setWards(dbWards)
+  }, [dbWards, setWards])
+
+  useEffect(() => {
+    if (dbDemands) setDemands(dbDemands)
+  }, [dbDemands, setDemands])
+
+  useEffect(() => {
+    if (dbHolidays) setHolidays(dbHolidays)
+  }, [dbHolidays, setHolidays])
+
+  useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {})
     }
@@ -49,19 +71,14 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-[#eef3f0]">
-      {/* Desktop sidebar */}
       <div className="hidden lg:block">
         <Sidebar />
       </div>
-
-      {/* Main content */}
       <main className="flex-1 min-w-0 pb-20 lg:pb-0">
         <div className="max-w-6xl mx-auto p-4 lg:p-6">
           <PageComponent />
         </div>
       </main>
-
-      {/* Mobile bottom nav */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50">
         <BottomNav />
       </div>
