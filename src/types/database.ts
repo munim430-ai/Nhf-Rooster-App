@@ -37,6 +37,7 @@ export interface Database {
           created_by?: string
           created_at?: string
         }
+        Relationships: []
       }
       doctors: {
         Row: {
@@ -93,6 +94,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
         }
+        Relationships: []
       }
       wards: {
         Row: {
@@ -116,6 +118,7 @@ export interface Database {
           active?: boolean
           created_at?: string
         }
+        Relationships: []
       }
       stations: {
         Row: {
@@ -142,6 +145,7 @@ export interface Database {
           needed?: number
           created_at?: string
         }
+        Relationships: []
       }
       demands: {
         Row: {
@@ -189,6 +193,7 @@ export interface Database {
           note?: string | null
           created_at?: string
         }
+        Relationships: []
       }
       holidays: {
         Row: {
@@ -215,6 +220,7 @@ export interface Database {
           month?: number | null
           created_at?: string
         }
+        Relationships: []
       }
       roster_snapshots: {
         Row: {
@@ -253,6 +259,7 @@ export interface Database {
           generated_by?: string | null
           created_at?: string
         }
+        Relationships: []
       }
       duty_bank: {
         Row: {
@@ -285,6 +292,7 @@ export interface Database {
           balance?: number
           created_at?: string
         }
+        Relationships: []
       }
     }
     Views: {
