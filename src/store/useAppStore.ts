@@ -70,7 +70,7 @@ function uid(): string {
   return 'id' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 }
 
-const defaultStations: ShiftStations = {
+export const defaultStations: ShiftStations = {
   morning: [
     { id: uid(), label: 'Observation', wards: ['Observation'], needed: 2 },
     { id: uid(), label: '3A', wards: ['3A'], needed: 2 },

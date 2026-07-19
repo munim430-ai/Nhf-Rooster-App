@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import type { Doctor, Ward, Demand, Holiday } from '@/types'
+import type { Doctor, Ward, Demand, Holiday, Shift, ShiftStations } from '@/types'
 import type { Json } from '@/types/database'
 
 // ==================== DOCTORS ====================
@@ -217,15 +217,19 @@ export function useHolidays() {
         id: h.id,
         date: h.date,
         label: h.label,
+        year: h.year ?? new Date(h.created_at).getFullYear(),
+        month: h.month ?? new Date(h.created_at).getMonth() + 1,
       }))
     },
   })
 
   const createHoliday = useMutation({
-    mutationFn: async (holiday: { date: number; label: string }) => {
+    mutationFn: async (holiday: { date: number; label: string; year: number; month: number }) => {
       const { data, error } = await supabase.from('holidays').insert({
         date: holiday.date,
         label: holiday.label,
+        year: holiday.year,
+        month: holiday.month,
       }).select().single()
       if (error) throw error
       return data
@@ -242,6 +246,94 @@ export function useHolidays() {
   })
 
   return { holidays, isLoading, createHoliday, deleteHoliday }
+}
+
+// ==================== STATIONS ====================
+export function useStations() {
+  const qc = useQueryClient()
+
+  const { data: stationRows, isLoading } = useQuery({
+    queryKey: ['stations'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('stations').select('*').order('label')
+      if (error) throw error
+      return (data || []).map((s) => ({
+        id: s.id,
+        label: s.label,
+        wards: s.wards,
+        needed: s.needed,
+        shift: s.shift as Shift,
+      }))
+    },
+  })
+
+  const stations: ShiftStations = { morning: [], evening: [], night: [] }
+  ;(stationRows || []).forEach((s) => {
+    stations[s.shift].push({ id: s.id, label: s.label, wards: s.wards, needed: s.needed })
+  })
+
+  const createStation = useMutation({
+    mutationFn: async (station: { label: string; wards: string[]; needed: number; shift: Shift }) => {
+      const { data, error } = await supabase.from('stations').insert({
+        label: station.label,
+        wards: station.wards,
+        needed: station.needed,
+        shift: station.shift,
+      }).select().single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stations'] }),
+  })
+
+  const updateStation = useMutation({
+    mutationFn: async (station: { id: string; label: string; wards: string[]; needed: number }) => {
+      const { error } = await supabase.from('stations').update({
+        label: station.label,
+        wards: station.wards,
+        needed: station.needed,
+      }).eq('id', station.id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stations'] }),
+  })
+
+  const deleteStation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('stations').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stations'] }),
+  })
+
+  return { stations, stationRows, isLoading, createStation, updateStation, deleteStation }
+}
+
+// ==================== APP SETTINGS (generic key/value) ====================
+export function useAppSetting<T>(key: string, defaultValue: T) {
+  const qc = useQueryClient()
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['app_settings', key],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('app_settings').select('*').eq('key', key).maybeSingle()
+      if (error) throw error
+      return (data?.value as T) ?? defaultValue
+    },
+  })
+
+  const saveSetting = useMutation({
+    mutationFn: async (value: T) => {
+      const { error } = await supabase.from('app_settings').upsert(
+        { key, value: value as Json, updated_at: new Date().toISOString() },
+        { onConflict: 'key' }
+      )
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['app_settings', key] }),
+  })
+
+  return { value: data ?? defaultValue, isLoading, saveSetting }
 }
 
 // ==================== ROSTER SNAPSHOTS ====================
@@ -279,4 +371,39 @@ export function useRosterSnapshots() {
   })
 
   return { snapshots, isLoading, saveSnapshot }
+}
+
+// ==================== DUTY BANK ====================
+export interface DutyBankRow {
+  id: string
+  month_key: string
+  doctor_id: string
+  base_target: number
+  effective_target: number
+  assigned: number
+  balance: number
+}
+
+export function useDutyBankHistory() {
+  const qc = useQueryClient()
+
+  const { data: rows, isLoading } = useQuery({
+    queryKey: ['duty_bank'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('duty_bank').select('*').order('month_key', { ascending: false })
+      if (error) throw error
+      return (data || []) as DutyBankRow[]
+    },
+  })
+
+  const upsertMonth = useMutation({
+    mutationFn: async (entries: Omit<DutyBankRow, 'id'>[]) => {
+      if (entries.length === 0) return
+      const { error } = await supabase.from('duty_bank').upsert(entries, { onConflict: 'month_key,doctor_id' })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['duty_bank'] }),
+  })
+
+  return { rows, isLoading, upsertMonth }
 }

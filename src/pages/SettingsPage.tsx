@@ -1,13 +1,39 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useMakerPasswords } from '@/hooks/useMakerPasswords'
+import { useAppSetting } from '@/hooks/useData'
 import { Shield, Plus, Trash2, X, Copy, Check } from 'lucide-react'
+
+interface HospitalConfig {
+  name: string
+  preparedBy: string
+}
 
 export default function SettingsPage() {
   const { doctors, wards, stations, demands, holidays, settings, meta, setSettings } = useAppStore()
   const { isMaster } = useAuth()
   const { passwords, createPassword, deactivatePassword, deletePassword } = useMakerPasswords()
+  const { value: hospitalConfig, isLoading: configLoading, saveSetting: saveHospitalConfig } = useAppSetting<HospitalConfig>(
+    'hospital_config',
+    { name: settings.hospitalName, preparedBy: settings.preparedByName }
+  )
+
+  useEffect(() => {
+    if (!configLoading && hospitalConfig) {
+      setSettings({ ...settings, hospitalName: hospitalConfig.name, preparedByName: hospitalConfig.preparedBy })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configLoading])
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const updateLetterhead = (next: { hospitalName: string; preparedByName: string }) => {
+    setSettings({ ...settings, ...next })
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      saveHospitalConfig.mutate({ name: next.hospitalName, preparedBy: next.preparedByName })
+    }, 600)
+  }
 
   const [showAddMaker, setShowAddMaker] = useState(false)
   const [newMakerPassword, setNewMakerPassword] = useState('')
@@ -188,7 +214,7 @@ export default function SettingsPage() {
             <input
               type="text"
               value={settings.hospitalName}
-              onChange={e => setSettings({ ...settings, hospitalName: e.target.value })}
+              onChange={e => updateLetterhead({ hospitalName: e.target.value, preparedByName: settings.preparedByName })}
               className="w-full px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
             />
           </div>
@@ -197,7 +223,7 @@ export default function SettingsPage() {
             <input
               type="text"
               value={settings.preparedByName}
-              onChange={e => setSettings({ ...settings, preparedByName: e.target.value })}
+              onChange={e => updateLetterhead({ hospitalName: settings.hospitalName, preparedByName: e.target.value })}
               placeholder="e.g. Dr. Sourav Barman"
               className="w-full px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
             />
