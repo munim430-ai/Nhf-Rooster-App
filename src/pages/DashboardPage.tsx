@@ -63,12 +63,12 @@ export default function DashboardPage() {
         <h2 className="text-sm font-semibold text-[#16221f] mb-4">Getting Started</h2>
         <ol className="space-y-3 text-sm text-[#16221f]">
           {[
-            'Add/review your Doctors and their categories (SMO, EMO, MO), and tick who can cover Cath evening duty.',
-            'Confirm the Wards list.',
-            'Set how many doctors each ward needs per shift in Shift Requirements.',
-            'Enter any standing Doctor Demands (days off, specific shift off).',
-            'Mark Holidays & Events on the calendar.',
-            'Go to Generate & Export to build the month's roster and print it as a PDF.',
+            "Add/review your Doctors and their categories (SMO, EMO, MO), and tick who can cover Cath evening duty.",
+            "Confirm the Wards list.",
+            "Set how many doctors each ward needs per shift in Shift Requirements.",
+            "Enter any standing Doctor Demands (days off, specific shift off).",
+            "Mark Holidays & Events on the calendar.",
+            "Go to Generate & Export to build the month roster and print it as a PDF.",
           ].map((step, i) => (
             <li key={i} className="flex gap-3">
               <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#0f6e5c] text-white text-xs font-bold flex items-center justify-center">
