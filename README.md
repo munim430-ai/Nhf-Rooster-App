@@ -8,7 +8,10 @@ A production-ready Progressive Web App (PWA) for generating and managing doctor 
 - **Smart Scheduling Algorithm**: Fair rotation, ward restrictions, Cath lab eligibility, OPD quotas, Friday-night caps, duty bank carry-over
 - **Mobile-First Design**: Works beautifully on phones, tablets, and desktops
 - **Offline Support**: PWA with service worker caching
-- **Export**: Print-to-PDF, Excel (.xlsx), CSV
+- **Manual Editing**: Interactive grid to reassign any duty slot after generation
+- **Bangladesh Holidays**: One-click loader for official BD public holidays
+- **Export**: PDF, Excel (.xlsx), Word (.docx), and CSV
+- **Backup & Restore**: Download a JSON backup and restore it later
 - **Supabase Backend**: Cloud sync for maker passwords and roster history
 
 ## Tech Stack

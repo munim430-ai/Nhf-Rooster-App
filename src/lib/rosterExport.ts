@@ -56,6 +56,67 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 // ---------------------------------------------------------------------------
+// CSV (.csv)
+// ---------------------------------------------------------------------------
+function csvEscape(val: string | number): string {
+  const s = String(val ?? '')
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+}
+
+export function exportRosterCsv(ctx: RosterExportContext): void {
+  const nameOf = (id: string) => ctx.doctors.find(d => d.id === id)?.name || '—'
+  const rows: (string | number)[][] = []
+
+  rows.push([ctx.hospitalName])
+  rows.push([`${MONTHS[ctx.month - 1]} ${ctx.year} — Duty Roster`])
+  if (ctx.preparedByName) rows.push([`Prepared by ${ctx.preparedByName}`])
+  rows.push([])
+
+  // One block per shift: rows = days, columns = stations.
+  SHIFTS.forEach(shift => {
+    const cols = shiftColumns(ctx, shift)
+    rows.push([SHIFT_LABEL[shift]])
+    rows.push(['Day', 'Weekday', 'Holiday', ...cols.map(c => c.label)])
+    for (let day = 1; day <= ctx.days; day++) {
+      const holiday = isHolidayDay(day, ctx.year, ctx.month, ctx.holidays)
+      const row: (string | number)[] = [
+        day,
+        weekdayShort(ctx.year, ctx.month, day),
+        holiday ? 'Holiday' : '',
+      ]
+      cols.forEach(col => {
+        const ids = ctx.roster[day]?.[shift]?.[col.id] || []
+        row.push(ids.map(nameOf).join('; '))
+      })
+      rows.push(row)
+    }
+    rows.push([])
+  })
+
+  // Per-doctor summary.
+  const stats = computeRosterStats(ctx.roster, ctx.effectiveStations)
+  rows.push(['Duty count summary'])
+  rows.push(['Doctor', 'Assigned', 'Target', 'Difference', 'Nights', 'Night Target', 'Cath', 'Cath Quota', 'OPD', 'OPD Max'])
+  ctx.doctors
+    .filter(d => d.active)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(d => {
+      const s = stats[d.id] || { assigned: 0, night: 0, cath: 0, opd: 0 }
+      rows.push([
+        d.name, s.assigned, d.target, s.assigned - d.target,
+        s.night, d.nightTarget,
+        d.cathEligible ? s.cath : '—', d.cathEligible ? d.cathQuota : '—',
+        s.opd, d.opdMax != null ? d.opdMax : '—',
+      ])
+    })
+
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n')
+  // Prepend a BOM so Excel opens UTF-8 correctly.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  triggerDownload(blob, `${fileStem(ctx.year, ctx.month)}.csv`)
+}
+
+// ---------------------------------------------------------------------------
 // Excel (.xlsx)
 // ---------------------------------------------------------------------------
 export async function exportRosterExcel(ctx: RosterExportContext): Promise<void> {
