@@ -427,18 +427,26 @@ export interface RestoreResult {
   meta?: RosterMeta
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const VALID_SCOPES = new Set(['weekly', 'date', 'always'])
+
 const newId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : 'id' + Math.random().toString(36).slice(2) + Date.now().toString(36)
 
+/** Keep a valid UUID as-is; replace any other id (e.g. the prototype's "id…") with a fresh UUID. */
+const asUuid = (id: string | undefined) => (id && UUID_RE.test(id) ? id : newId())
+
 /**
  * Replaces all shared roster data with the contents of a backup file.
  *
  * This is destructive: it deletes the current doctors, wards, stations,
- * demands, and holidays and re-inserts them from the backup, preserving the
- * original IDs so that demand → doctor references stay intact. Validation runs
- * before any deletion, so a malformed file aborts without touching the data.
+ * demands, and holidays and re-inserts them from the backup. Every insert
+ * payload is built (and IDs normalized to valid UUIDs) BEFORE anything is
+ * deleted, so a bad file can't wipe the database and then fail on insert.
+ * IDs that are already valid UUIDs are preserved; non-UUID IDs from the older
+ * prototype format are regenerated, with demand → doctor references remapped.
  */
 export function useRestoreBackup() {
   const qc = useQueryClient()
@@ -455,14 +463,41 @@ export function useRestoreBackup() {
         throw new Error('This file does not look like a roster backup (missing doctors or wards).')
       }
 
-      // Keep original doctor IDs so demand references survive; only demands that
-      // point at a doctor present in the backup are restored (avoids FK errors).
-      const doctorIds = new Set(doctors.map(d => d.id).filter(Boolean))
-      const validDemands = demands.filter(dm => doctorIds.has(dm.doctorId))
+      // --- Build every insert payload first (nothing is deleted yet) ---
+
+      // Remap doctor ids so demand references follow any regenerated ids.
+      const doctorIdMap = new Map<string, string>()
+      const doctorRows = doctors.map(d => {
+        const id = asUuid(d.id)
+        if (d.id) doctorIdMap.set(d.id, id)
+        return {
+          id,
+          name: d.name,
+          categories: d.categories ?? [],
+          secret: !!d.secret,
+          allowed_wards: d.allowedWards ?? [],
+          cath_eligible: !!d.cathEligible,
+          cath_quota: d.cathQuota ?? 0,
+          target: d.target ?? 23,
+          night_target: d.nightTarget ?? 6,
+          opd_min: d.opdMin ?? 0,
+          opd_max: d.opdMax ?? null,
+          duty_start_date: d.dutyStartDate ?? null,
+          duty_end_date: d.dutyEndDate ?? null,
+          active: d.active ?? true,
+        }
+      })
+
+      const wardRows = wards.map(w => ({
+        id: asUuid(w.id),
+        name: w.name,
+        group_name: w.group,
+        active: w.active ?? true,
+      }))
 
       const stationRows = SHIFTS.flatMap(shift =>
         (stationsObj[shift] ?? []).map(s => ({
-          id: s.id || newId(),
+          id: asUuid(s.id),
           label: s.label,
           wards: s.wards ?? [],
           needed: s.needed ?? 1,
@@ -470,8 +505,43 @@ export function useRestoreBackup() {
         }))
       )
 
-      // Delete existing rows. Demands go first (FK to doctors); the filter
-      // `.not('id','is',null)` matches every row so the whole table is cleared.
+      // Prototype holidays have no year/month; fall back to the backup's month.
+      const fallbackYear = data.meta?.year ?? new Date().getFullYear()
+      const fallbackMonth = data.meta?.month ?? new Date().getMonth() + 1
+      const holidayRows = holidays.map(h => ({
+        id: asUuid(h.id),
+        date: h.date,
+        label: h.label,
+        year: h.year ?? fallbackYear,
+        month: h.month ?? fallbackMonth,
+      }))
+
+      // Only keep demands pointing at a doctor in this backup; default a missing
+      // scope (prototype leave demands omit it) to the DB-valid 'date'.
+      const demandRows = demands
+        .map(dm => {
+          const doctor_id = dm.doctorId ? doctorIdMap.get(dm.doctorId) : undefined
+          if (!doctor_id) return null
+          return {
+            id: asUuid(dm.id),
+            doctor_id,
+            kind: dm.kind,
+            scope: VALID_SCOPES.has(dm.scope) ? dm.scope : 'date',
+            shift: dm.shift ?? null,
+            pair: dm.pair ?? null,
+            ward_name: dm.wardName ?? null,
+            day_of_week: dm.dayOfWeek ?? null,
+            date: dm.date ?? null,
+            start_date: dm.startDate ?? null,
+            end_date: dm.endDate ?? null,
+            note: dm.note ?? null,
+          }
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null)
+
+      // --- Now delete and re-insert (payloads are ready) ---
+      // Demands go first (FK to doctors); the filter `.not('id','is',null)`
+      // matches every row so the whole table is cleared.
       const wipe = async (table: 'demands' | 'stations' | 'holidays' | 'doctors' | 'wards') => {
         const { error } = await supabase.from(table).delete().not('id', 'is', null)
         if (error) throw error
@@ -482,69 +552,31 @@ export function useRestoreBackup() {
       await wipe('doctors')
       await wipe('wards')
 
-      if (wards.length) {
-        const { error } = await supabase.from('wards').insert(
-          wards.map(w => ({ id: w.id || newId(), name: w.name, group_name: w.group, active: w.active ?? true }))
-        )
+      if (wardRows.length) {
+        const { error } = await supabase.from('wards').insert(wardRows)
         if (error) throw error
       }
-
-      if (doctors.length) {
-        const { error } = await supabase.from('doctors').insert(
-          doctors.map(d => ({
-            id: d.id || newId(),
-            name: d.name,
-            categories: d.categories ?? [],
-            secret: !!d.secret,
-            allowed_wards: d.allowedWards ?? [],
-            cath_eligible: !!d.cathEligible,
-            cath_quota: d.cathQuota ?? 0,
-            target: d.target ?? 23,
-            night_target: d.nightTarget ?? 6,
-            opd_min: d.opdMin ?? 0,
-            opd_max: d.opdMax ?? null,
-            duty_start_date: d.dutyStartDate ?? null,
-            duty_end_date: d.dutyEndDate ?? null,
-            active: d.active ?? true,
-          }))
-        )
+      if (doctorRows.length) {
+        const { error } = await supabase.from('doctors').insert(doctorRows)
         if (error) throw error
       }
-
       if (stationRows.length) {
         const { error } = await supabase.from('stations').insert(stationRows)
         if (error) throw error
       }
-
-      if (holidays.length) {
-        const { error } = await supabase.from('holidays').insert(
-          holidays.map(h => ({ id: h.id || newId(), date: h.date, label: h.label, year: h.year, month: h.month }))
-        )
+      if (holidayRows.length) {
+        const { error } = await supabase.from('holidays').insert(holidayRows)
+        if (error) throw error
+      }
+      if (demandRows.length) {
+        const { error } = await supabase.from('demands').insert(demandRows)
         if (error) throw error
       }
 
-      if (validDemands.length) {
-        const { error } = await supabase.from('demands').insert(
-          validDemands.map(dm => ({
-            id: dm.id || newId(),
-            doctor_id: dm.doctorId,
-            kind: dm.kind,
-            scope: dm.scope,
-            shift: dm.shift,
-            pair: dm.pair,
-            ward_name: dm.wardName,
-            day_of_week: dm.dayOfWeek,
-            date: dm.date,
-            start_date: dm.startDate,
-            end_date: dm.endDate,
-            note: dm.note,
-          }))
-        )
-        if (error) throw error
-      }
-
+      // Letterhead is best-effort: if app_settings blocks the write (RLS), the
+      // roster data is still restored, so don't fail the whole operation.
       if (data.settings) {
-        const { error } = await supabase.from('app_settings').upsert(
+        await supabase.from('app_settings').upsert(
           {
             key: 'hospital_config',
             value: { name: data.settings.hospitalName, preparedBy: data.settings.preparedByName } as Json,
@@ -552,16 +584,15 @@ export function useRestoreBackup() {
           },
           { onConflict: 'key' }
         )
-        if (error) throw error
       }
 
       return {
         counts: {
-          doctors: doctors.length,
-          wards: wards.length,
+          doctors: doctorRows.length,
+          wards: wardRows.length,
           stations: stationRows.length,
-          demands: validDemands.length,
-          holidays: holidays.length,
+          demands: demandRows.length,
+          holidays: holidayRows.length,
         },
         settings: data.settings,
         meta: data.meta,
