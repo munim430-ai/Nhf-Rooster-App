@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useHolidays } from '@/hooks/useData'
+import { bdHolidaysFor } from '@/lib/bdHolidays'
 import { MONTHS } from '@/types'
-import { Plus, Trash2, CalendarX } from 'lucide-react'
+import { Plus, Trash2, CalendarX, CalendarPlus } from 'lucide-react'
 
 export default function HolidaysPage() {
   const { holidays, meta, setMeta } = useAppStore()
@@ -11,6 +12,8 @@ export default function HolidaysPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [date, setDate] = useState(1)
   const [label, setLabel] = useState('')
+  const [bdStatus, setBdStatus] = useState<{ kind: 'ok' | 'warn'; text: string }[]>([])
+  const [loadingBd, setLoadingBd] = useState(false)
 
   const daysInMonth = new Date(meta.year, meta.month, 0).getDate()
   const monthHolidays = holidays
@@ -29,6 +32,38 @@ export default function HolidaysPage() {
 
   const handleDelete = (id: string, lbl: string) => {
     if (confirm(`Delete holiday "${lbl}"?`)) deleteHoliday.mutate(id)
+  }
+
+  const handleLoadBdHolidays = async () => {
+    setLoadingBd(true)
+    setBdStatus([])
+    const { list, hasYearData } = bdHolidaysFor(meta.year, meta.month)
+    let added = 0
+    let skipped = 0
+    for (const h of list) {
+      const dup = monthHolidays.some(x => x.date === h.date)
+      if (dup) { skipped++; continue }
+      try {
+        await createHoliday.mutateAsync({ date: h.date, label: h.label, year: meta.year, month: meta.month })
+        added++
+      } catch {
+        // leave it out of the added count; the user can add it manually
+      }
+    }
+    const status: { kind: 'ok' | 'warn'; text: string }[] = []
+    let msg = `Loaded ${added} official holiday${added === 1 ? '' : 's'} for ${MONTHS[meta.month - 1]} ${meta.year}.`
+    if (skipped) msg += ` ${skipped} date${skipped === 1 ? '' : 's'} skipped (already marked).`
+    if (added === 0 && skipped === 0) msg += ' No official holidays fall in this month.'
+    msg += ' Fridays are covered automatically as the weekly holiday.'
+    status.push({ kind: 'ok', text: msg })
+    if (!hasYearData) {
+      status.push({
+        kind: 'warn',
+        text: `Movable religious holidays (Eid, Shab-e-Barat, Ashura, Puja, etc.) for ${meta.year} aren't in this app's built-in list — only the fixed national dates were loaded. Add the movable ones manually from the official circular once announced.`,
+      })
+    }
+    setBdStatus(status)
+    setLoadingBd(false)
   }
 
   return (
@@ -59,13 +94,36 @@ export default function HolidaysPage() {
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <button
+          onClick={handleLoadBdHolidays}
+          disabled={loadingBd}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50 sm:ml-auto"
+        >
+          <CalendarPlus className="w-4 h-4" />
+          {loadingBd ? 'Loading...' : 'Load BD Holidays'}
+        </button>
+        <button
           onClick={() => setShowAdd(v => !v)}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] sm:ml-auto"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42]"
         >
           <Plus className="w-4 h-4" />
           Add Holiday
         </button>
       </div>
+
+      {bdStatus.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {bdStatus.map((s, i) => (
+            <div
+              key={i}
+              className={`text-xs rounded-lg px-3 py-2 ${
+                s.kind === 'ok' ? 'bg-[#dcefe9] text-[#0f6e5c]' : 'bg-[#f6e3d3] text-[#6b4c19]'
+              }`}
+            >
+              {s.text}
+            </div>
+          ))}
+        </div>
+      )}
 
       {showAdd && (
         <div className="bg-white rounded-xl border border-[#c9d8d1] p-4 mb-4 flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">

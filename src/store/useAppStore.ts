@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
-  Doctor, Ward, ShiftStations, Demand, Holiday,
+  Doctor, Ward, WardGroup, ShiftStations, Demand, Holiday,
   Settings, RosterMeta, RosterEntry, EffectiveStations,
   FridayNightHistory, DutyBank
 } from '@/types'
@@ -138,33 +138,35 @@ export const defaultStations: ShiftStations = {
   ],
 }
 
+export const DEFAULT_WARDS: { name: string; group: WardGroup }[] = [
+  { name: 'Observation', group: 'General' },
+  { name: '3A', group: 'General' },
+  { name: '3B', group: 'General' },
+  { name: '5A', group: 'General' },
+  { name: '5B', group: 'General' },
+  { name: '5C', group: 'General' },
+  { name: '5D', group: 'General' },
+  { name: '7', group: 'General' },
+  { name: '9', group: 'General' },
+  { name: '10', group: 'General' },
+  { name: '12', group: 'General' },
+  { name: 'HTN', group: 'General' },
+  { name: 'Cabin', group: 'General' },
+  { name: 'DS 15A', group: 'DS' },
+  { name: 'DS 15B', group: 'DS' },
+  { name: 'DS 15C', group: 'DS' },
+  { name: 'DS 9A', group: 'DS' },
+  { name: 'DS 9B', group: 'DS' },
+  { name: 'DS 8', group: 'DS' },
+  { name: 'OPD A', group: 'OPD' },
+  { name: 'OPD B', group: 'OPD' },
+  { name: 'OPD C', group: 'OPD' },
+  { name: 'Cath', group: 'Cath' },
+]
+
 const initialState: Omit<AppState, keyof AppActions> = {
   doctors: [],
-  wards: [
-    { id: uid(), name: 'Observation', group: 'General', active: true },
-    { id: uid(), name: '3A', group: 'General', active: true },
-    { id: uid(), name: '3B', group: 'General', active: true },
-    { id: uid(), name: '5A', group: 'General', active: true },
-    { id: uid(), name: '5B', group: 'General', active: true },
-    { id: uid(), name: '5C', group: 'General', active: true },
-    { id: uid(), name: '5D', group: 'General', active: true },
-    { id: uid(), name: '7', group: 'General', active: true },
-    { id: uid(), name: '9', group: 'General', active: true },
-    { id: uid(), name: '10', group: 'General', active: true },
-    { id: uid(), name: '12', group: 'General', active: true },
-    { id: uid(), name: 'HTN', group: 'General', active: true },
-    { id: uid(), name: 'Cabin', group: 'General', active: true },
-    { id: uid(), name: 'DS 15A', group: 'DS', active: true },
-    { id: uid(), name: 'DS 15B', group: 'DS', active: true },
-    { id: uid(), name: 'DS 15C', group: 'DS', active: true },
-    { id: uid(), name: 'DS 9A', group: 'DS', active: true },
-    { id: uid(), name: 'DS 9B', group: 'DS', active: true },
-    { id: uid(), name: 'DS 8', group: 'DS', active: true },
-    { id: uid(), name: 'OPD A', group: 'OPD', active: true },
-    { id: uid(), name: 'OPD B', group: 'OPD', active: true },
-    { id: uid(), name: 'OPD C', group: 'OPD', active: true },
-    { id: uid(), name: 'Cath', group: 'Cath', active: true },
-  ],
+  wards: DEFAULT_WARDS.map(w => ({ id: uid(), name: w.name, group: w.group, active: true })),
   stations: defaultStations,
   demands: [],
   holidays: [],

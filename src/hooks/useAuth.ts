@@ -2,14 +2,30 @@ import { useCallback } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { supabase } from '@/lib/supabase'
 
-const MASTER_PASSWORD = 'MediCat15@'
+/** Fallback master password used until the Master sets a custom one. */
+export const DEFAULT_MASTER_PASSWORD = 'MediCat15@'
+
+/** The master password in effect: the value stored in app_settings, or the default. */
+async function fetchMasterPassword(): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'master_password')
+      .maybeSingle()
+    return typeof data?.value === 'string' && data.value ? data.value : DEFAULT_MASTER_PASSWORD
+  } catch {
+    return DEFAULT_MASTER_PASSWORD
+  }
+}
 
 export function useAuth() {
   const { isAuthenticated, authRole, makerLabel, setAuthenticated } = useAppStore()
 
   const login = useCallback(async (password: string): Promise<{ success: boolean; error?: string }> => {
-    // Check master password first
-    if (password === MASTER_PASSWORD) {
+    // Check master password first (custom value if the Master set one, else default)
+    const masterPassword = await fetchMasterPassword()
+    if (password === masterPassword) {
       setAuthenticated(true, 'master', 'Dr. Alif')
       return { success: true }
     }
