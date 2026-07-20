@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { Doctor, Ward, Demand, Holiday, Shift, ShiftStations, Settings, RosterMeta } from '@/types'
 import { SHIFTS } from '@/types'
+import { DEFAULT_WARDS, defaultStations } from '@/store/useAppStore'
 import type { Json } from '@/types/database'
 
 // ==================== DOCTORS ====================
@@ -568,6 +569,52 @@ export function useRestoreBackup() {
     },
     onSuccess: () => {
       ;['doctors', 'wards', 'stations', 'demands', 'holidays', 'app_settings'].forEach(key =>
+        qc.invalidateQueries({ queryKey: [key] })
+      )
+    },
+  })
+}
+
+// ==================== RESET TO DEFAULTS ====================
+/**
+ * Wipes all shared roster data and reseeds the default wards and stations,
+ * returning the app to a clean baseline. Roster maker passwords, the master
+ * password, and the letterhead are intentionally left untouched so a reset
+ * cannot lock anyone out or erase branding.
+ */
+export function useResetAll() {
+  const qc = useQueryClient()
+
+  return useMutation<void, Error, void>({
+    mutationFn: async () => {
+      const wipe = async (
+        table: 'demands' | 'duty_bank' | 'roster_snapshots' | 'stations' | 'holidays' | 'doctors' | 'wards'
+      ) => {
+        const { error } = await supabase.from(table).delete().not('id', 'is', null)
+        if (error) throw error
+      }
+      // Demands and duty_bank reference doctors; delete them first.
+      await wipe('demands')
+      await wipe('duty_bank')
+      await wipe('roster_snapshots')
+      await wipe('stations')
+      await wipe('holidays')
+      await wipe('doctors')
+      await wipe('wards')
+
+      const { error: wardErr } = await supabase.from('wards').insert(
+        DEFAULT_WARDS.map(w => ({ name: w.name, group_name: w.group, active: true }))
+      )
+      if (wardErr) throw wardErr
+
+      const stationRows = SHIFTS.flatMap(shift =>
+        defaultStations[shift].map(s => ({ label: s.label, wards: s.wards, needed: s.needed, shift }))
+      )
+      const { error: stationErr } = await supabase.from('stations').insert(stationRows)
+      if (stationErr) throw stationErr
+    },
+    onSuccess: () => {
+      ;['doctors', 'wards', 'stations', 'demands', 'holidays', 'duty_bank', 'roster_snapshots'].forEach(key =>
         qc.invalidateQueries({ queryKey: [key] })
       )
     },

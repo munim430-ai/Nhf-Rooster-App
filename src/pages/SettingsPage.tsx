@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth, DEFAULT_MASTER_PASSWORD } from '@/hooks/useAuth'
 import { useMakerPasswords } from '@/hooks/useMakerPasswords'
-import { useAppSetting, useRestoreBackup, type BackupData } from '@/hooks/useData'
-import { Shield, Plus, Trash2, X, Copy, Check, Upload, Download } from 'lucide-react'
+import { useAppSetting, useRestoreBackup, useResetAll, type BackupData } from '@/hooks/useData'
+import { Shield, Plus, Trash2, X, Copy, Check, Upload, Download, KeyRound, AlertTriangle } from 'lucide-react'
 
 interface HospitalConfig {
   name: string
@@ -11,12 +11,69 @@ interface HospitalConfig {
 }
 
 export default function SettingsPage() {
-  const { doctors, wards, stations, demands, holidays, settings, meta, setSettings, setMeta } = useAppStore()
+  const {
+    doctors, wards, stations, demands, holidays, settings, meta,
+    setSettings, setMeta, setRoster, setEffectiveStations, setWarnings, setDutyBank, setFridayNightHistory,
+  } = useAppStore()
   const { isMaster } = useAuth()
   const { passwords, createPassword, deactivatePassword, deletePassword } = useMakerPasswords()
   const restoreBackup = useRestoreBackup()
+  const resetAll = useResetAll()
   const restoreInputRef = useRef<HTMLInputElement>(null)
   const [restoreMsg, setRestoreMsg] = useState('')
+
+  // Master password (stored in app_settings; empty string means "still the default").
+  const { value: storedMasterPassword, saveSetting: saveMasterPassword } = useAppSetting<string>('master_password', '')
+  const [mpCurrent, setMpCurrent] = useState('')
+  const [mpNew, setMpNew] = useState('')
+  const [mpConfirm, setMpConfirm] = useState('')
+  const [mpMsg, setMpMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  const handleChangeMasterPassword = async () => {
+    setMpMsg(null)
+    const effective = storedMasterPassword || DEFAULT_MASTER_PASSWORD
+    if (mpCurrent !== effective) {
+      setMpMsg({ kind: 'err', text: 'Current master password is incorrect.' })
+      return
+    }
+    if (!mpNew) {
+      setMpMsg({ kind: 'err', text: 'Enter a new password.' })
+      return
+    }
+    if (mpNew !== mpConfirm) {
+      setMpMsg({ kind: 'err', text: 'New password and confirmation do not match.' })
+      return
+    }
+    try {
+      await saveMasterPassword.mutateAsync(mpNew)
+      setMpCurrent(''); setMpNew(''); setMpConfirm('')
+      setMpMsg({ kind: 'ok', text: 'Master password updated. Use it the next time you sign in.' })
+    } catch (err) {
+      setMpMsg({ kind: 'err', text: err instanceof Error ? `Update failed: ${err.message}` : 'Update failed.' })
+    }
+  }
+
+  // Reset-all danger zone.
+  const [resetConfirm, setResetConfirm] = useState('')
+  const [resetMsg, setResetMsg] = useState('')
+
+  const handleResetAll = async () => {
+    if (resetConfirm.trim().toUpperCase() !== 'RESET') return
+    setResetMsg('')
+    try {
+      await resetAll.mutateAsync()
+      // Clear the locally generated roster and derived state.
+      setRoster(null)
+      setEffectiveStations(null)
+      setWarnings([])
+      setDutyBank({})
+      setFridayNightHistory({})
+      setResetConfirm('')
+      setResetMsg('All roster data has been reset to defaults.')
+    } catch (err) {
+      setResetMsg(err instanceof Error ? `Reset failed: ${err.message}` : 'Reset failed.')
+    }
+  }
 
   const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -131,15 +188,67 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold text-[#16221f]">Master Password</h2>
         </div>
         <p className="text-sm text-[#5c6f6a] mb-3">
-          The master password is set by Dr. Alif and grants full control over the app.
-          Current master: <span className="font-mono bg-[#eef3f0] px-2 py-0.5 rounded text-[#0a4f42]">MediCat15@</span>
+          The master password is held by Dr. Alif and grants full control over the app. Keep it private and
+          share it only through a secure channel.
+          {!storedMasterPassword && ' The app is currently using the built-in default — change it below.'}
         </p>
         {isMaster && (
           <div className="text-xs text-[#b5602a] bg-[#f6e3d3] rounded-lg px-3 py-2">
-            You are logged in as Master. You can create and manage roster maker passwords below.
+            You are logged in as Master. You can change the master password below and manage roster maker passwords.
           </div>
         )}
       </div>
+
+      {/* Change Master Password */}
+      {isMaster && (
+        <div className="bg-white rounded-xl border border-[#c9d8d1] p-5 mb-4">
+          <div className="flex items-center gap-2 mb-4">
+            <KeyRound className="w-5 h-5 text-[#0f6e5c]" />
+            <h2 className="text-sm font-semibold text-[#16221f]">Change Master Password</h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-[#5c6f6a] mb-1">Current password</label>
+              <input
+                type="password"
+                value={mpCurrent}
+                onChange={e => setMpCurrent(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#5c6f6a] mb-1">New password</label>
+              <input
+                type="password"
+                value={mpNew}
+                onChange={e => setMpNew(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#5c6f6a] mb-1">Confirm new password</label>
+              <input
+                type="password"
+                value={mpConfirm}
+                onChange={e => setMpConfirm(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-3 mt-3">
+            <button
+              onClick={handleChangeMasterPassword}
+              disabled={!mpCurrent || !mpNew || !mpConfirm || saveMasterPassword.isPending}
+              className="px-4 py-2 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] disabled:opacity-50"
+            >
+              {saveMasterPassword.isPending ? 'Updating...' : 'Update Password'}
+            </button>
+            {mpMsg && (
+              <span className={`text-xs ${mpMsg.kind === 'err' ? 'text-[#a83a2c]' : 'text-[#0f6e5c]'}`}>{mpMsg.text}</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Maker Passwords */}
       {isMaster && (
@@ -336,6 +445,45 @@ export default function SettingsPage() {
           fresh backup first if you might need the current data.
         </div>
       </div>
+
+      {/* Danger Zone — reset all (Master only) */}
+      {isMaster && (
+        <div className="bg-white rounded-xl border border-[#e0b4ab] p-5 mt-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-5 h-5 text-[#a83a2c]" />
+            <h2 className="text-sm font-semibold text-[#a83a2c]">Danger Zone — Reset All Data</h2>
+          </div>
+          <p className="text-sm text-[#5c6f6a] mb-3">
+            Permanently deletes every doctor, demand, holiday, saved roster, and duty-bank record for everyone,
+            and restores the default wards and stations. Roster maker passwords, the master password, and the
+            letterhead are kept. This cannot be undone — download a backup first.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div className="flex-1">
+              <label className="block text-xs text-[#5c6f6a] mb-1">Type RESET to confirm</label>
+              <input
+                type="text"
+                value={resetConfirm}
+                onChange={e => setResetConfirm(e.target.value)}
+                placeholder="RESET"
+                className="w-full sm:w-56 px-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#a83a2c]"
+              />
+            </div>
+            <button
+              onClick={handleResetAll}
+              disabled={resetConfirm.trim().toUpperCase() !== 'RESET' || resetAll.isPending}
+              className="px-4 py-2 rounded-lg bg-[#a83a2c] text-white text-sm font-medium hover:bg-[#822c21] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {resetAll.isPending ? 'Resetting...' : 'Reset All Data'}
+            </button>
+          </div>
+          {resetMsg && (
+            <p className={`text-xs mt-3 ${resetMsg.startsWith('Reset failed') ? 'text-[#a83a2c]' : 'text-[#0f6e5c]'}`}>
+              {resetMsg}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
