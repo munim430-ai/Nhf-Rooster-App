@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import {
-  LayoutDashboard, Users, Building2, ClipboardList, CalendarCheck,
+  LayoutDashboard, Users, HeartPulse, Building2, ClipboardList, CalendarCheck,
   CalendarX, FileSpreadsheet, BarChart3, PiggyBank, StickyNote,
   Settings, MoreHorizontal, X,
 } from 'lucide-react'
@@ -10,6 +10,7 @@ import {
 const allNav = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'doctors', label: 'Doctors', icon: Users },
+  { id: 'cathlab', label: 'Cath Lab', icon: HeartPulse },
   { id: 'wards', label: 'Wards', icon: Building2 },
   { id: 'stations', label: 'Shift Requirements', icon: ClipboardList },
   { id: 'demands', label: 'Demands', icon: CalendarCheck },

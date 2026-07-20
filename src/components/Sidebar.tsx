@@ -1,7 +1,7 @@
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import {
-  LayoutDashboard, Users, Building2, ClipboardList, CalendarCheck,
+  LayoutDashboard, Users, HeartPulse, Building2, ClipboardList, CalendarCheck,
   CalendarX, FileSpreadsheet, BarChart3, PiggyBank, StickyNote,
   Settings, LogOut, Heart
 } from 'lucide-react'
@@ -9,6 +9,7 @@ import {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'doctors', label: 'Doctors', icon: Users },
+  { id: 'cathlab', label: 'Cath Lab', icon: HeartPulse },
   { id: 'wards', label: 'Wards', icon: Building2 },
   { id: 'stations', label: 'Shift Requirements', icon: ClipboardList },
   { id: 'demands', label: 'Demands', icon: CalendarCheck },
