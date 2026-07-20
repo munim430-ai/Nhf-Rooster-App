@@ -7,6 +7,7 @@ import BottomNav from '@/components/BottomNav'
 import Sidebar from '@/components/Sidebar'
 import DashboardPage from '@/pages/DashboardPage'
 import DoctorsPage from '@/pages/DoctorsPage'
+import CathLabPage from '@/pages/CathLabPage'
 import WardsPage from '@/pages/WardsPage'
 import StationsPage from '@/pages/StationsPage'
 import DemandsPage from '@/pages/DemandsPage'
@@ -20,6 +21,7 @@ import SettingsPage from '@/pages/SettingsPage'
 const navMap: Record<string, React.FC> = {
   dashboard: DashboardPage,
   doctors: DoctorsPage,
+  cathlab: CathLabPage,
   wards: WardsPage,
   stations: StationsPage,
   demands: DemandsPage,
