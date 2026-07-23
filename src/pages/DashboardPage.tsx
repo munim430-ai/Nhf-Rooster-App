@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 
 export default function DashboardPage() {
-  const { doctors, wards, demands, holidays, roster, warnings, meta } = useAppStore()
+  const { doctors, wards, demands, holidays, roster, shortfalls, improvisations, meta } = useAppStore()
   const { isMaster, makerLabel } = useAuth()
 
   const activeDocs = doctors.filter(d => d.active && !d.secret).length
@@ -19,7 +19,7 @@ export default function DashboardPage() {
     { title: 'Demands', value: demands.length, sub: 'standing requests', icon: CalendarCheck },
     { title: 'Holidays', value: holidays.length, sub: 'marked this month', icon: CalendarX },
     { title: 'Roster', value: roster ? `${meta.days} days` : '—', sub: roster ? `Generated ${meta.month}/${meta.year}` : 'Not generated', icon: FileSpreadsheet },
-    { title: 'Shortfalls', value: warnings.length, sub: warnings.length === 0 ? 'All clear' : 'issues to review', icon: AlertTriangle },
+    { title: 'Shortfalls', value: shortfalls.length, sub: shortfalls.length === 0 ? 'All clear' : `${improvisations.length} auto-filled`, icon: AlertTriangle },
   ]
 
   return (

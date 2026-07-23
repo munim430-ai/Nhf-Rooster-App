@@ -13,6 +13,7 @@ import StationsPage from '@/pages/StationsPage'
 import DemandsPage from '@/pages/DemandsPage'
 import HolidaysPage from '@/pages/HolidaysPage'
 import GeneratePage from '@/pages/GeneratePage'
+import ShortfallsPage from '@/pages/ShortfallsPage'
 import SummaryPage from '@/pages/SummaryPage'
 import DutyBankPage from '@/pages/DutyBankPage'
 import NotesPage from '@/pages/NotesPage'
@@ -27,6 +28,7 @@ const navMap: Record<string, React.FC> = {
   demands: DemandsPage,
   holidays: HolidaysPage,
   generate: GeneratePage,
+  shortfalls: ShortfallsPage,
   summary: SummaryPage,
   dutybank: DutyBankPage,
   notes: NotesPage,

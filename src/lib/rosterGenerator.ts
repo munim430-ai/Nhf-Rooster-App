@@ -1,6 +1,6 @@
 import type {
   Doctor, Ward, ShiftStations, Demand, Holiday, RosterEntry,
-  EffectiveStations, Shift, Station, Category
+  EffectiveStations, Shift, Station, Category, Shortfall, Improvisation
 } from '@/types'
 import {
   SHIFTS, HOLIDAY_CLOSED_WARDS, FIRST_MAN_PRIORITY_WARDS,
@@ -12,12 +12,24 @@ export interface GenerationResult {
   roster: RosterEntry
   effectiveStations: EffectiveStations
   warnings: string[]
+  shortfalls: Shortfall[]
+  improvisations: Improvisation[]
   assignedCount: Record<string, number>
   nightCount: Record<string, number>
   cathCount: Record<string, number>
   opdCount: Record<string, number>
   fridayNightCount: Record<string, number>
   leaveOverrides: Array<{ day: number; shift: Shift; doctorId: string }>
+}
+
+export interface GenerateOptions {
+  /**
+   * When false (default), only place doctors who satisfy every rule, quota and
+   * target — leaving slots empty otherwise (recorded as shortfalls). When true,
+   * fill the remaining gaps by relaxing soft rules, recording each as an
+   * improvisation.
+   */
+  autoFill?: boolean
 }
 
 export function generateRoster(
@@ -29,8 +41,10 @@ export function generateRoster(
   month: number,
   days: number,
   fridayNightHistory: Record<string, Record<string, number>>,
-  dutyBank: Record<string, Record<string, { baseTarget: number; effectiveTarget: number; assigned: number; balance: number }>>
+  dutyBank: Record<string, Record<string, { baseTarget: number; effectiveTarget: number; assigned: number; balance: number }>>,
+  options: GenerateOptions = {}
 ): GenerationResult {
+  const autoFill = options.autoFill ?? false
   const activeDoctors = doctors.filter(d => d.active)
   const assignedCount: Record<string, number> = {}
   const nightCount: Record<string, number> = {}
@@ -77,6 +91,8 @@ export function generateRoster(
   const roster: RosterEntry = {}
   const effectiveStations: EffectiveStations = {}
   const warnings: string[] = []
+  const shortfalls: Shortfall[] = []
+  const improvisations: Improvisation[] = []
 
   // Index demands by doctor
   const demandsByDoctor: Record<string, Demand[]> = {}
@@ -172,6 +188,28 @@ export function generateRoster(
     return dem ? (dem.pair || 'ME') : null
   }
 
+  // Which soft rule(s) had to be relaxed to place this doctor here (for the
+  // Shortfalls log). Evaluated against the doctor's state before assignment.
+  function relaxReasons(d: Doctor, station: Station, shift: Shift, day: number, weekday: number): string[] {
+    const r: string[] = []
+    if (assignedCount[d.id] >= effectiveTargets[d.id]) r.push('over monthly target')
+    if (shift === 'night' && nightCount[d.id] >= d.nightTarget) r.push('over night target')
+    if (station.wards.includes('Cath') && cathCount[d.id] >= d.cathQuota) r.push('over Cath quota')
+    if (isOnLeave(d.id, day)) r.push('covering casual leave')
+    if (shift === 'night' && weekday === 5 && exemptFromFriday.has(d.id)) r.push('repeat Friday night (rotation)')
+    if (lastShiftWorked[d.id] === shift && (sameShiftStreak[d.id] || 0) >= 3) r.push('4th+ same shift in a row')
+    if (station.wards.includes('7') && isSMO(d) && threeACount[d.id] < 4) r.push('reserve SMO used on Ward 7')
+    if (lastDayWorked[d.id] !== undefined) {
+      const effTarget = effectiveTargets[d.id] || d.target
+      const pace = days / Math.max(1, effTarget)
+      const minGap = Math.max(1, Math.floor(pace) - 1)
+      if (day - lastDayWorked[d.id] < minGap) r.push('scheduled tighter than pacing')
+    }
+    if (shift === 'morning' && doubleDutyPair(d.id, day, weekday) === 'EN') r.push('morning despite evening+night request')
+    if (r.length === 0) r.push('relaxed a soft placement rule')
+    return r
+  }
+
   // Cache static eligible counts
   const staticEligibleCountCache: Record<string, number> = {}
   function staticEligibleCount(station: Station): number {
@@ -240,14 +278,18 @@ export function generateRoster(
       fixedAssignDemands.forEach(dem => {
         const d = doctorById[dem.doctorId]
         if (!d) return
-        if (usedThisShift.has(d.id)) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name} skipped: already assigned elsewhere this shift.`)
-          return
+        // A fixed assignment is an explicit demand; if it can't be honoured,
+        // record it as an unmet-demand shortfall (never improvised away).
+        const skip = (why: string) => {
+          const msg = `Day ${day} — ${shift} — fixed assignment for ${d.name}: ${why}`
+          warnings.push(msg)
+          shortfalls.push({
+            day, shift, stationId: '', stationLabel: dem.wardName || '—',
+            needed: 1, filled: 0, missing: 1, kind: 'demand', reason: msg,
+          })
         }
-        if (lastNightDay[d.id] === day - 1) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name} skipped: mandatory rest after night shift.`)
-          return
-        }
+        if (usedThisShift.has(d.id)) return skip('already assigned elsewhere this shift.')
+        if (lastNightDay[d.id] === day - 1) return skip('mandatory rest after night shift.')
         const alreadyToday = assignedTodayMap[d.id] || []
         if (alreadyToday.length > 0) {
           const pair = doubleDutyPair(d.id, day, weekday)
@@ -255,44 +297,17 @@ export function generateRoster(
           const patternOk = pair === 'ME' ? (alreadyToday.length === 1 && lastLeg === 'morning' && shift === 'evening')
             : pair === 'EN' ? (alreadyToday.length === 1 && lastLeg === 'evening' && shift === 'night')
             : false
-          if (!patternOk) {
-            warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name} skipped: no matching double-duty demand.`)
-            return
-          }
+          if (!patternOk) return skip('no matching double-duty demand.')
         }
-        if (isOff(d.id, day, weekday, shift)) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name} skipped: doctor has off request.`)
-          return
-        }
-        if (isOnLeave(d.id, day)) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name} skipped: doctor on casual leave.`)
-          return
-        }
+        if (isOff(d.id, day, weekday, shift)) return skip('doctor has off request.')
+        if (isOnLeave(d.id, day)) return skip('doctor on casual leave.')
         const matchingStation = dayStations.find(s => s.wards.includes(dem.wardName || ''))
-        if (!matchingStation) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: "${dem.wardName}" not staffed this shift.`)
-          return
-        }
-        if (matchingStation.wards.includes('Cath') && !d.cathEligible) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: not Cath-eligible.`)
-          return
-        }
-        if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: First Man restricted to priority wards.`)
-          return
-        }
-        if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: ward-restricted, "${dem.wardName}" not allowed.`)
-          return
-        }
-        if (isOpdStation(matchingStation) && d.opdMax != null && opdCount[d.id] >= d.opdMax) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: OPD limit reached.`)
-          return
-        }
-        if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) {
-          warnings.push(`Day ${day} — ${shift} — fixed assignment for ${d.name}: Friday night cap reached.`)
-          return
-        }
+        if (!matchingStation) return skip(`"${dem.wardName}" not staffed this shift.`)
+        if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
+        if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
+        if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
+        if (isOpdStation(matchingStation) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return skip('OPD limit reached.')
+        if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return skip('Friday night cap reached.')
         usedThisShift.add(d.id)
         assignedCount[d.id]++
         assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
@@ -455,6 +470,16 @@ export function generateRoster(
           roster[day][shift]![station.id] = [...(roster[day][shift]![station.id] || []), d.id]
         }
 
+        // Log an auto-fill placement. Call BEFORE assignOne so the reasons
+        // reflect the doctor's state at the moment they were picked.
+        function recordImprov(d: Doctor) {
+          improvisations.push({
+            day, shift, stationId: station.id, stationLabel: station.label,
+            doctorId: d.id, doctorName: d.name,
+            reasons: relaxReasons(d, station, shift, day, weekday),
+          })
+        }
+
         const wardForComposition = station.wards.find(w => SLOT_COMPOSITION[w])
         const slots = wardForComposition ? SLOT_COMPOSITION[wardForComposition][shift] : undefined
 
@@ -469,40 +494,67 @@ export function generateRoster(
               if (excludeCats && doc.categories.some(c => excludeCats.includes(c))) return false
               return true
             }
+            // Strict pass: required category, then the fallback category.
             let picked: Doctor | null = null
+            let improvised = false
             const normalPool = doSort(baseEligible(false).filter(d => meetsSlot(catFilter, d) && !filledIds.includes(d.id)), false)
             const nc = pickAvoidingSeniorConflict(normalPool, 1, [])
             if (nc.length) picked = nc[0]
-            else {
-              const extraPool = doSort(baseEligible(true).filter(d => meetsSlot(catFilter, d) && !filledIds.includes(d.id) && !normalPool.includes(d)), true)
-              const ec = pickAvoidingSeniorConflict(extraPool, 1, [])
-              if (ec.length) picked = ec[0]
-            }
             if (!picked && fallbackFilter && fallbackFilter !== catFilter) {
               const fbNormal = doSort(baseEligible(false).filter(d => meetsSlot(fallbackFilter, d) && !filledIds.includes(d.id)), false)
               const fnc = pickAvoidingSeniorConflict(fbNormal, 1, [])
               if (fnc.length) picked = fnc[0]
-              else {
-                const fbExtra = doSort(baseEligible(true).filter(d => meetsSlot(fallbackFilter, d) && !filledIds.includes(d.id) && !fbNormal.includes(d)), true)
+            }
+            // Auto-fill pass: same order but relaxing soft rules.
+            if (!picked && autoFill) {
+              const extraPool = doSort(baseEligible(true).filter(d => meetsSlot(catFilter, d) && !filledIds.includes(d.id)), true)
+              const ec = pickAvoidingSeniorConflict(extraPool, 1, [])
+              if (ec.length) { picked = ec[0]; improvised = true }
+              else if (fallbackFilter && fallbackFilter !== catFilter) {
+                const fbExtra = doSort(baseEligible(true).filter(d => meetsSlot(fallbackFilter, d) && !filledIds.includes(d.id)), true)
                 const fec = pickAvoidingSeniorConflict(fbExtra, 1, [])
-                if (fec.length) picked = fec[0]
+                if (fec.length) { picked = fec[0]; improvised = true }
               }
             }
-            if (picked) { filledIds.push(picked.id); assignOne(picked) }
-            else if (catFilter) {
-              warnings.push(`Day ${day} — ${shift} — "${station.label}": slot requiring [${catFilter.join('/')}] left empty.`)
+            if (picked) {
+              filledIds.push(picked.id)
+              if (improvised) recordImprov(picked)
+              assignOne(picked)
+            } else if (catFilter) {
+              const canExtra = baseEligible(true).some(d => meetsSlot(catFilter, d) && !filledIds.includes(d.id))
+              shortfalls.push({
+                day, shift, stationId: station.id, stationLabel: station.label,
+                needed: station.needed, filled: filledIds.length, missing: 1, kind: 'slot',
+                reason: canExtra
+                  ? `no [${catFilter.join('/')}] available without bending a rule`
+                  : `no eligible [${catFilter.join('/')}] doctor for this slot`,
+              })
             }
           })
         } else {
-          let chosen = pickAvoidingSeniorConflict(doSort(baseEligible(false), false), remainingNeeded, [])
-          if (chosen.length < remainingNeeded) {
-            const extraPool = doSort(baseEligible(true).filter(d => !chosen.includes(d)), true)
-            chosen = pickAvoidingSeniorConflict(extraPool, remainingNeeded, chosen)
+          // Strict pass: only doctors who satisfy every rule, quota and target.
+          const strictChosen = pickAvoidingSeniorConflict(doSort(baseEligible(false), false), remainingNeeded, [])
+          strictChosen.forEach(assignOne)
+          let filled = strictChosen.length
+          // Auto-fill pass: relax soft rules to fill the remaining slots.
+          if (filled < remainingNeeded && autoFill) {
+            const extraPool = doSort(baseEligible(true), true)
+            const combined = pickAvoidingSeniorConflict(extraPool, remainingNeeded, strictChosen)
+            const extraOnly = combined.filter(d => !strictChosen.includes(d))
+            extraOnly.forEach(d => { recordImprov(d); assignOne(d) })
+            filled += extraOnly.length
           }
-          if (chosen.length < remainingNeeded) {
-            warnings.push(`Day ${day} — ${shift} — "${station.label}": short by ${remainingNeeded - chosen.length} doctor(s).`)
+          if (filled < remainingNeeded) {
+            const canExtra = baseEligible(true).length > 0
+            shortfalls.push({
+              day, shift, stationId: station.id, stationLabel: station.label,
+              needed: station.needed, filled: alreadyAssigned.length + filled,
+              missing: remainingNeeded - filled, kind: 'understaffed',
+              reason: canExtra
+                ? 'no doctor available without exceeding a target/quota or covering leave'
+                : 'no eligible doctor (ward / category / rest restrictions)',
+            })
           }
-          chosen.forEach(assignOne)
         }
       })
     })
@@ -522,6 +574,8 @@ export function generateRoster(
     roster,
     effectiveStations,
     warnings,
+    shortfalls,
+    improvisations,
     assignedCount,
     nightCount,
     cathCount,
