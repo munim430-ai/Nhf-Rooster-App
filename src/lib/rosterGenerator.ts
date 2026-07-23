@@ -268,7 +268,11 @@ export function generateRoster(
     effectiveStations[day] = {}
     const assignedTodayMap: Record<string, Shift[]> = {}
 
-    SHIFTS.forEach(shift => {
+    // HARD priority: fill night duties first, then the day shifts. OPD stations
+    // are prioritised within each shift (below). This keeps the critical
+    // night/OPD requirements from being starved by ordinary day duties.
+    const shiftOrder: Shift[] = ['night', 'morning', 'evening']
+    shiftOrder.forEach(shift => {
       roster[day][shift] = {}
       const usedThisShift = new Set<string>()
       let dayStations = holidayAdjustedStations(shift, holidayToday).filter(s => s.needed > 0)
@@ -310,7 +314,7 @@ export function generateRoster(
           const pair = doubleDutyPair(d.id, day, weekday)
           const lastLeg = alreadyToday[alreadyToday.length - 1]
           const patternOk = pair === 'ME' ? (alreadyToday.length === 1 && lastLeg === 'morning' && shift === 'evening')
-            : pair === 'EN' ? (alreadyToday.length === 1 && lastLeg === 'evening' && shift === 'night')
+            : pair === 'EN' ? (alreadyToday.length === 1 && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening')))
             : false
           if (!patternOk) return skip('no matching double-duty demand.')
         }
@@ -335,11 +339,14 @@ export function generateRoster(
         roster[day][shift]![matchingStation.id] = [...(roster[day][shift]![matchingStation.id] || []), d.id]
       })
 
-      // Priority ordering: Observation first, then Ward 7, then rest shuffled
+      // Priority ordering: Observation, then OPD requirements, then Ward 7,
+      // then the rest (shuffled). Combined with night-first shift order, this
+      // fills the night and OPD requirements ahead of ordinary day duties.
       const obsStations = dayStations.filter(s => s.wards.includes('Observation'))
-      const w7Stations = dayStations.filter(s => s.wards.includes('7'))
-      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('7'))
-      const shuffledStations = [...obsStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
+      const opdStations = dayStations.filter(s => !s.wards.includes('Observation') && isOpdStation(s))
+      const w7Stations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && s.wards.includes('7'))
+      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && !s.wards.includes('7'))
+      const shuffledStations = [...obsStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
 
       shuffledStations.forEach(station => {
         const alreadyAssigned = roster[day][shift]![station.id] || []
@@ -356,8 +363,11 @@ export function generateRoster(
               if (!pair) return false
               if (already.length >= 2) return false
               const lastLeg = already[already.length - 1]
+              // A double-duty doctor works exactly the two paired shifts. Night
+              // is processed before evening, so accept the E+N pair in either
+              // order (evening→night or night→evening).
               if (pair === 'ME' && !(lastLeg === 'morning' && shift === 'evening')) return false
-              if (pair === 'EN' && !(lastLeg === 'evening' && shift === 'night')) return false
+              if (pair === 'EN' && !((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))) return false
             }
             if (shift === 'morning') {
               const already2 = assignedTodayMap[d.id] || []
@@ -383,7 +393,9 @@ export function generateRoster(
             if (assignedCount[d.id] >= effectiveTargets[d.id]) return false
             if (!extra && lastShiftWorked[d.id] === shift && (sameShiftStreak[d.id] || 0) >= 3) return false
             if (!extra && station.wards.includes('7') && isSMO(d) && threeACount[d.id] < 4) return false
-            if (!extra && lastDayWorked[d.id] !== undefined) {
+            // Pacing gaps between days apply only to a doctor's FIRST duty of the
+            // day — never block a legitimate same-day double-duty second leg.
+            if (!extra && already.length === 0 && lastDayWorked[d.id] !== undefined) {
               const effTarget = effectiveTargets[d.id] || d.target
               const pace = days / Math.max(1, effTarget)
               const minGap = Math.max(1, Math.floor(pace) - 1)

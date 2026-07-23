@@ -35,6 +35,10 @@ export default function GeneratePage() {
     { day: number; stationId: string; position: number; current: string | null; label: string } | null
   >(null)
   const [pickerSearch, setPickerSearch] = useState('')
+  // Per-doctor editable chart
+  const [docSearch, setDocSearch] = useState('')
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+  const [docEditCell, setDocEditCell] = useState<{ day: number; shift: Shift } | null>(null)
   const [showWarnings, setShowWarnings] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isAutoFilling, setIsAutoFilling] = useState(false)
@@ -295,6 +299,33 @@ export default function GeneratePage() {
     d => !pickerSearch || d.name.toLowerCase().includes(pickerSearch.toLowerCase())
   )
 
+  // ---- Per-doctor editable chart ----
+  const selectedDoc = doctors.find(d => d.id === selectedDocId) || null
+  const docSearchResults = docSearch
+    ? pickableDoctors.filter(d => d.name.toLowerCase().includes(docSearch.toLowerCase())).slice(0, 8)
+    : []
+
+  // The station a doctor is on for a given day/shift (or null).
+  const docStationId = (docId: string, day: number, shift: Shift): string | null => {
+    const sr = roster?.[day]?.[shift] || {}
+    return Object.keys(sr).find(stId => (sr[stId] || []).includes(docId)) || null
+  }
+  const stationLabelFor = (day: number, shift: Shift, stId: string | null): string => {
+    if (!stId) return '—'
+    const s = effectiveStations?.[day]?.[shift]?.find(x => x.id === stId)
+    return s ? stationDisplayLabel(s) : stId
+  }
+
+  // Move a doctor to a station (or off) for a day/shift; adjusts the roster.
+  const setDocAssignment = (docId: string, day: number, shift: Shift, newStationId: string | null) => {
+    if (!roster) return
+    const sr = roster[day]?.[shift] || {}
+    const cleaned: Record<string, string[]> = {}
+    for (const stId of Object.keys(sr)) cleaned[stId] = (sr[stId] || []).filter(id => id !== docId)
+    if (newStationId) cleaned[newStationId] = [...(cleaned[newStationId] || []), docId]
+    setRoster({ ...roster, [day]: { ...roster[day], [shift]: cleaned } })
+  }
+
   return (
     <div>
       <div className="mb-6">
@@ -446,6 +477,93 @@ export default function GeneratePage() {
               Print
             </button>
             {saveMsg && <span className="text-xs text-[#5c6f6a]">{saveMsg}</span>}
+          </div>
+
+          {/* Per-doctor editable chart */}
+          <div className="bg-white rounded-xl border border-[#c9d8d1] p-4 mb-4 print:hidden">
+            <div className="flex items-center gap-2 mb-1">
+              <Search className="w-4 h-4 text-[#0f6e5c]" />
+              <h2 className="text-sm font-semibold text-[#16221f]">Edit by doctor</h2>
+            </div>
+            <p className="text-xs text-[#5c6f6a] mb-3">
+              Search a doctor to see their whole-month schedule. Tap any cell to change, add, or clear that duty — the roster updates instantly.
+            </p>
+            <div className="relative max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5c6f6a]" />
+              <input
+                type="text"
+                value={selectedDoc ? selectedDoc.name : docSearch}
+                onChange={e => { setDocSearch(e.target.value); setSelectedDocId(null) }}
+                placeholder="Search doctor name..."
+                className="w-full pl-9 pr-8 py-2.5 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
+              />
+              {selectedDoc && (
+                <button
+                  onClick={() => { setSelectedDocId(null); setDocSearch('') }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#5c6f6a] p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+              {!selectedDoc && docSearchResults.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full bg-white border border-[#c9d8d1] rounded-lg shadow-sm max-h-64 overflow-y-auto">
+                  {docSearchResults.map(d => (
+                    <button
+                      key={d.id}
+                      onClick={() => { setSelectedDocId(d.id); setDocSearch('') }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-[#eef3f0] flex items-center justify-between"
+                    >
+                      <span className="text-[#16221f]">{d.name}</span>
+                      <span className="text-[10px] text-[#5c6f6a]">{d.categories.join('/')}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {selectedDoc && (
+              <div className="mt-4 overflow-x-auto border border-[#c9d8d1] rounded-lg">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-[#0f6e5c] text-white">
+                      <th className="px-2 py-1.5 text-left font-medium">Day</th>
+                      <th className="px-2 py-1.5 font-medium">Wk</th>
+                      <th className="px-2 py-1.5 font-medium">Morning</th>
+                      <th className="px-2 py-1.5 font-medium">Evening</th>
+                      <th className="px-2 py-1.5 font-medium">Night</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: meta.days }, (_, i) => i + 1).map(day => {
+                      const weekday = new Date(meta.year, meta.month - 1, day).toLocaleDateString('en-US', { weekday: 'short' })
+                      const holiday = isHolidayDay(day, meta.year, meta.month, holidays)
+                      return (
+                        <tr key={day} className={holiday ? 'bg-[#f6e3d3]' : ''}>
+                          <td className="px-2 py-1 font-semibold text-[#16221f] border-t border-[#eef3f0]">{day}{holiday ? ' ★' : ''}</td>
+                          <td className="px-2 py-1 text-center text-[#5c6f6a] border-t border-[#eef3f0]">{weekday}</td>
+                          {(['morning', 'evening', 'night'] as Shift[]).map(shift => {
+                            const stId = docStationId(selectedDoc.id, day, shift)
+                            const label = stationLabelFor(day, shift, stId)
+                            return (
+                              <td key={shift} className="px-1.5 py-1 text-center border-t border-l border-[#eef3f0]">
+                                <button
+                                  onClick={() => setDocEditCell({ day, shift })}
+                                  className={`w-full px-1.5 py-1 rounded border whitespace-nowrap ${
+                                    stId ? 'border-[#c9d8d1] bg-white hover:border-[#0f6e5c] text-[#16221f]' : 'border-dashed border-[#d9c7bf] text-[#a9998f] hover:bg-[#eef3f0]'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Shift tabs + edit toggle */}
@@ -645,6 +763,50 @@ export default function GeneratePage() {
                   <span className="text-[10px] text-[#5c6f6a]">{d.categories.join('/')}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-doctor cell picker: choose which station this doctor is on */}
+      {docEditCell && selectedDoc && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
+          <div className="bg-white w-full sm:w-[420px] sm:rounded-xl rounded-t-xl max-h-[85vh] flex flex-col">
+            <div className="sticky top-0 bg-white border-b border-[#c9d8d1] px-5 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-[#16221f]">{selectedDoc.name}</h2>
+                <p className="text-xs text-[#5c6f6a] mt-0.5">Day {docEditCell.day} · {docEditCell.shift}</p>
+              </div>
+              <button onClick={() => setDocEditCell(null)} className="text-[#5c6f6a]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-2">
+              {docStationId(selectedDoc.id, docEditCell.day, docEditCell.shift) && (
+                <button
+                  onClick={() => { setDocAssignment(selectedDoc.id, docEditCell.day, docEditCell.shift, null); setDocEditCell(null) }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-[#a83a2c] hover:bg-[#f7dfd9] font-medium"
+                >
+                  Off — remove this duty
+                </button>
+              )}
+              {(() => {
+                const cur = docStationId(selectedDoc.id, docEditCell.day, docEditCell.shift)
+                const list = effectiveStations?.[docEditCell.day]?.[docEditCell.shift] || []
+                if (list.length === 0) return <p className="text-center text-sm text-[#5c6f6a] py-6">No stations run this shift.</p>
+                return list.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => { setDocAssignment(selectedDoc.id, docEditCell.day, docEditCell.shift, s.id); setDocEditCell(null) }}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg text-sm hover:bg-[#eef3f0] flex items-center justify-between ${s.id === cur ? 'bg-[#dcefe9]' : ''}`}
+                  >
+                    <span className="font-medium text-[#16221f]">{stationDisplayLabel(s)}</span>
+                    <span className="text-[10px] text-[#5c6f6a]">
+                      {(roster?.[docEditCell.day]?.[docEditCell.shift]?.[s.id]?.length ?? 0)}/{s.needed}
+                    </span>
+                  </button>
+                ))
+              })()}
             </div>
           </div>
         </div>
