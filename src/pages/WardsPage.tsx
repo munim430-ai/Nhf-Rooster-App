@@ -6,6 +6,14 @@ import { Plus, Trash2, Building2 } from 'lucide-react'
 
 const GROUP_OPTIONS: WardGroup[] = ['General', 'DS', 'OPD', 'Cath']
 
+// Display labels for ward groups (the stored value stays the same).
+const GROUP_LABEL: Record<WardGroup, string> = {
+  General: 'Main',
+  DS: 'DS',
+  OPD: 'OPD',
+  Cath: 'Cath',
+}
+
 const GROUP_COLORS: Record<WardGroup, string> = {
   General: 'bg-[#dcefe9] text-[#0f6e5c]',
   DS: 'bg-[#dde9f2] text-[#264a72]',
@@ -60,7 +68,7 @@ export default function WardsPage() {
           className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
         >
           <option value="">All groups</option>
-          {GROUP_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+          {GROUP_OPTIONS.map(g => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
         </select>
         <button
           onClick={() => setShowAdd(v => !v)}
@@ -90,7 +98,7 @@ export default function WardsPage() {
               onChange={e => setGroup(e.target.value as WardGroup)}
               className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
             >
-              {GROUP_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+              {GROUP_OPTIONS.map(g => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
             </select>
           </div>
           <div className="flex gap-2">
@@ -121,7 +129,7 @@ export default function WardsPage() {
       <div className="space-y-5">
         {grouped.map(({ group: g, items }) => (
           <div key={g}>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-[#5c6f6a] mb-2">{g}</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[#5c6f6a] mb-2">{GROUP_LABEL[g]}</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
               {items.map(w => (
                 <div
@@ -135,7 +143,7 @@ export default function WardsPage() {
                       {w.name}
                     </div>
                     <span className={`inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${GROUP_COLORS[w.group]}`}>
-                      {w.group}
+                      {GROUP_LABEL[w.group]}
                     </span>
                   </div>
                   <div className="flex items-center gap-1 ml-2 flex-shrink-0">
