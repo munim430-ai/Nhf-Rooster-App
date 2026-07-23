@@ -54,7 +54,13 @@ export function generateRoster(
   const obsCount: Record<string, number> = {}
   const threeACount: Record<string, number> = {}
   const ward7Count: Record<string, number> = {}
+  // Per-doctor count of each shift type, used to spread morning/evening/night
+  // evenly among EMOs.
+  const shiftTypeCount: Record<string, Record<Shift, number>> = {}
   const leaveOverrides: Array<{ day: number; shift: Shift; doctorId: string }> = []
+
+  // Wards an SMO may be placed at (hard restriction). SMO is prioritised to 3A.
+  const SMO_WARDS = ['3A', '7', 'OPD A', 'OPD B', 'OPD C', 'DS 15A']
 
   activeDoctors.forEach(d => {
     assignedCount[d.id] = 0
@@ -65,6 +71,7 @@ export function generateRoster(
     obsCount[d.id] = 0
     threeACount[d.id] = 0
     ward7Count[d.id] = 0
+    shiftTypeCount[d.id] = { morning: 0, evening: 0, night: 0 }
   })
 
   // Duty bank: reduce targets for doctors who worked overtime last month
@@ -192,7 +199,8 @@ export function generateRoster(
   // Shortfalls log). Evaluated against the doctor's state before assignment.
   function relaxReasons(d: Doctor, station: Station, shift: Shift, day: number, weekday: number): string[] {
     const r: string[] = []
-    if (assignedCount[d.id] >= effectiveTargets[d.id]) r.push('over monthly target')
+    // Note: monthly target, OPD cap and ward restrictions are HARD rules and are
+    // never relaxed, so they never appear here.
     if (shift === 'night' && nightCount[d.id] >= d.nightTarget) r.push('over night target')
     if (station.wards.includes('Cath') && cathCount[d.id] >= d.cathQuota) r.push('over Cath quota')
     if (isOnLeave(d.id, day)) r.push('covering casual leave')
@@ -217,6 +225,7 @@ export function generateRoster(
     if (staticEligibleCountCache[key] !== undefined) return staticEligibleCountCache[key]
     const count = activeDoctors.filter(d => {
       if (station.wards.includes('Cath') && !d.cathEligible) return false
+      if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
       if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
       if (d.allowedWards.length > 0 && !station.wards.some(w => d.allowedWards.includes(w))) return false
@@ -304,12 +313,14 @@ export function generateRoster(
         const matchingStation = dayStations.find(s => s.wards.includes(dem.wardName || ''))
         if (!matchingStation) return skip(`"${dem.wardName}" not staffed this shift.`)
         if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
+        if (isSMO(d) && !matchingStation.wards.some(w => SMO_WARDS.includes(w))) return skip('SMO restricted to 3A / 7 / OPD / DS 15A.')
         if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
         if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
         if (isOpdStation(matchingStation) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return skip('OPD limit reached.')
         if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return skip('Friday night cap reached.')
         usedThisShift.add(d.id)
         assignedCount[d.id]++
+        shiftTypeCount[d.id][shift]++
         assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
         if (shift === 'night') { nightCount[d.id]++; lastNightDay[d.id] = day }
         if (matchingStation.wards.includes('Cath')) cathCount[d.id]++
@@ -348,17 +359,22 @@ export function generateRoster(
               if (!extra && doubleDutyPair(d.id, day, weekday) === 'EN') return false
             }
             if (station.wards.includes('Cath') && !d.cathEligible) return false
+            // HARD: SMO only at 3A / 7 / OPD A-C / DS 15A.
+            if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
             if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
             if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
+            // HARD: ward check-marks (allowed wards).
             if (d.allowedWards.length > 0 && !station.wards.some(w => d.allowedWards.includes(w))) return false
             if (isOff(d.id, day, weekday, shift)) return false
             if (!extra && isOnLeave(d.id, day)) return false
             if (shift === 'night' && !extra && nightCount[d.id] >= d.nightTarget) return false
             if (station.wards.includes('Cath') && !extra && cathCount[d.id] >= d.cathQuota) return false
+            // HARD: OPD ward cap — never exceeded, even by auto-fill.
             if (isOpdStation(station) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return false
             if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return false
             if (shift === 'night' && weekday === 5 && !extra && exemptFromFriday.has(d.id)) return false
-            if (!extra && assignedCount[d.id] >= effectiveTargets[d.id]) return false
+            // HARD: total duty count (monthly target) — never exceeded, even by auto-fill.
+            if (assignedCount[d.id] >= effectiveTargets[d.id]) return false
             if (!extra && lastShiftWorked[d.id] === shift && (sameShiftStreak[d.id] || 0) >= 3) return false
             if (!extra && station.wards.includes('7') && isSMO(d) && threeACount[d.id] < 4) return false
             if (!extra && lastDayWorked[d.id] !== undefined) {
@@ -434,6 +450,12 @@ export function generateRoster(
               const nb = b.nightTarget - nightCount[b.id]
               if (nb !== na) return nb - na
             }
+            // Spread morning/evening/night evenly among EMOs: prefer the EMO
+            // with the fewest duties of this shift type so far.
+            if (isEMO(a) && isEMO(b)) {
+              const as = shiftTypeCount[a.id][shift], bs = shiftTypeCount[b.id][shift]
+              if (as !== bs) return as - bs
+            }
             const aLast = lastDayWorked[a.id] !== undefined ? lastDayWorked[a.id] : -999
             const bLast = lastDayWorked[b.id] !== undefined ? lastDayWorked[b.id] : -999
             if (aLast !== bLast) return aLast - bLast
@@ -451,6 +473,7 @@ export function generateRoster(
         function assignOne(d: Doctor) {
           usedThisShift.add(d.id)
           assignedCount[d.id]++
+          shiftTypeCount[d.id][shift]++
           assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
           if (lastShiftWorked[d.id] === shift && lastDayWorked[d.id] !== undefined) {
             sameShiftStreak[d.id] = (sameShiftStreak[d.id] || 1) + 1
