@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useRosterSnapshots, useDutyBankHistory } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
@@ -31,10 +31,6 @@ export default function GeneratePage() {
 
   const [shiftTab, setShiftTab] = useState<Shift>('morning')
   const [editMode, setEditMode] = useState(false)
-  const [editSlot, setEditSlot] = useState<
-    { day: number; stationId: string; position: number; current: string | null; label: string } | null
-  >(null)
-  const [pickerSearch, setPickerSearch] = useState('')
   // Per-doctor editable chart
   const [docSearch, setDocSearch] = useState('')
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
@@ -248,57 +244,6 @@ export default function GeneratePage() {
   // Doctors that may be placed into a slot (respects the secret-team visibility rule).
   const pickableDoctors = doctors.filter(d => d.active && (!d.secret || (isMaster && secretUnlocked)))
 
-  // Columns for the editable grid: every station that appears for the selected
-  // shift anywhere in the month, in first-seen order.
-  const gridColumns = useMemo(() => {
-    if (!effectiveStations) return [] as { id: string; label: string }[]
-    const cols: { id: string; label: string }[] = []
-    const seen = new Set<string>()
-    for (let day = 1; day <= meta.days; day++) {
-      for (const st of effectiveStations[day]?.[shiftTab] || []) {
-        if (!seen.has(st.id)) {
-          seen.add(st.id)
-          cols.push({ id: st.id, label: stationDisplayLabel(st) })
-        }
-      }
-    }
-    return cols
-  }, [effectiveStations, shiftTab, meta.days])
-
-  // Immutable update of a single slot in the roster.
-  const updateSlot = (day: number, stationId: string, position: number, newId: string | null) => {
-    if (!roster) return
-    const arr = [...(roster[day]?.[shiftTab]?.[stationId] || [])]
-    if (newId === null) {
-      if (position < arr.length) arr.splice(position, 1)
-    } else if (position < arr.length) {
-      arr[position] = newId
-    } else {
-      arr.push(newId)
-    }
-    setRoster({
-      ...roster,
-      [day]: {
-        ...roster[day],
-        [shiftTab]: {
-          ...roster[day]?.[shiftTab],
-          [stationId]: arr,
-        },
-      },
-    })
-  }
-
-  const applyPick = (newId: string | null) => {
-    if (!editSlot) return
-    updateSlot(editSlot.day, editSlot.stationId, editSlot.position, newId)
-    setEditSlot(null)
-    setPickerSearch('')
-  }
-
-  const pickerList = pickableDoctors.filter(
-    d => !pickerSearch || d.name.toLowerCase().includes(pickerSearch.toLowerCase())
-  )
-
   // ---- Per-doctor editable chart ----
   const selectedDoc = doctors.find(d => d.id === selectedDocId) || null
   const docSearchResults = docSearch
@@ -479,7 +424,8 @@ export default function GeneratePage() {
             {saveMsg && <span className="text-xs text-[#5c6f6a]">{saveMsg}</span>}
           </div>
 
-          {/* Per-doctor editable chart */}
+          {/* Per-doctor editable chart — revealed by the "Edit assignments" button */}
+          {editMode && (
           <div className="bg-white rounded-xl border border-[#c9d8d1] p-4 mb-4 print:hidden">
             <div className="flex items-center gap-2 mb-1">
               <Search className="w-4 h-4 text-[#0f6e5c]" />
@@ -565,6 +511,7 @@ export default function GeneratePage() {
               </div>
             )}
           </div>
+          )}
 
           {/* Shift tabs + edit toggle */}
           <div className="flex items-center justify-between gap-2 mb-4 border-b border-[#c9d8d1] print:hidden">
@@ -592,76 +539,6 @@ export default function GeneratePage() {
             </button>
           </div>
 
-          {/* Interactive editable grid (on-screen only) */}
-          {editMode && (
-            <div className="bg-white rounded-xl border border-[#c9d8d1] p-4 mb-4 print:hidden">
-              <p className="text-xs text-[#5c6f6a] mb-3">
-                Tap any doctor or an empty slot to reassign it. Changes apply instantly to the preview,
-                summary, and exports below — remember to <b>Save Roster</b> when you're done.
-              </p>
-              <div className="overflow-x-auto border border-[#c9d8d1] rounded-lg">
-                <table className="text-[11px] border-collapse min-w-[900px] w-full">
-                  <thead>
-                    <tr>
-                      <th className="sticky left-0 z-10 bg-[#0f6e5c] text-white font-medium px-2 py-1.5 text-left">Day</th>
-                      <th className="bg-[#0f6e5c] text-white font-medium px-2 py-1.5">Wk</th>
-                      {gridColumns.map(col => (
-                        <th key={col.id} className="bg-[#0f6e5c] text-white font-medium px-2 py-1.5 whitespace-nowrap">
-                          {col.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: meta.days }, (_, i) => i + 1).map(day => {
-                      const weekday = new Date(meta.year, meta.month - 1, day).toLocaleDateString('en-US', { weekday: 'short' })
-                      const holiday = isHolidayDay(day, meta.year, meta.month, holidays)
-                      return (
-                        <tr key={day} className={holiday ? 'bg-[#f6e3d3]' : ''}>
-                          <td className={`sticky left-0 z-10 font-semibold px-2 py-1 text-left border-t border-[#e2ece7] ${holiday ? 'bg-[#ecd3b8]' : 'bg-[#e2ece7]'}`}>
-                            {day}{holiday ? ' ★' : ''}
-                          </td>
-                          <td className="px-2 py-1 text-center border-t border-[#eef3f0] text-[#5c6f6a]">{weekday}</td>
-                          {gridColumns.map(col => {
-                            const effStation = effectiveStations[day]?.[shiftTab]?.find(s => s.id === col.id)
-                            const assigned = roster[day]?.[shiftTab]?.[col.id] || []
-                            return (
-                              <td key={col.id} className="px-1.5 py-1 text-center border-t border-l border-[#eef3f0] align-top">
-                                {!effStation ? (
-                                  <span className="text-[#c9d8d1]">×</span>
-                                ) : (
-                                  <div className="flex flex-wrap gap-1 justify-center">
-                                    {assigned.map((docId, pos) => (
-                                      <button
-                                        key={pos}
-                                        onClick={() => setEditSlot({ day, stationId: col.id, position: pos, current: docId, label: effStation.label })}
-                                        className="px-1.5 py-0.5 rounded border border-[#c9d8d1] bg-white hover:border-[#0f6e5c] whitespace-nowrap"
-                                      >
-                                        {doctorName(docId)}
-                                      </button>
-                                    ))}
-                                    {Array.from({ length: Math.max(0, effStation.needed - assigned.length) }).map((_, k) => (
-                                      <button
-                                        key={`e${k}`}
-                                        onClick={() => setEditSlot({ day, stationId: col.id, position: assigned.length, current: null, label: effStation.label })}
-                                        className="px-1.5 py-0.5 rounded border border-dashed border-[#d99] text-[#a83a2c] hover:bg-[#f7dfd9]"
-                                      >
-                                        + empty
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
 
           {/* Printable roster */}
           <div ref={printRef} className="print-area bg-white rounded-xl border border-[#c9d8d1] p-5">
@@ -711,62 +588,6 @@ export default function GeneratePage() {
         </>
       )}
 
-      {/* Reassignment picker */}
-      {editSlot && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
-          <div className="bg-white w-full sm:w-[420px] sm:rounded-xl rounded-t-xl max-h-[85vh] flex flex-col">
-            <div className="sticky top-0 bg-white border-b border-[#c9d8d1] px-5 py-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-[#16221f]">Reassign slot</h2>
-                <p className="text-xs text-[#5c6f6a] mt-0.5">
-                  {editSlot.label} · Day {editSlot.day} · {shiftTab}
-                </p>
-              </div>
-              <button onClick={() => { setEditSlot(null); setPickerSearch('') }} className="text-[#5c6f6a]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-4 border-b border-[#eef3f0]">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5c6f6a]" />
-                <input
-                  autoFocus
-                  type="text"
-                  value={pickerSearch}
-                  onChange={e => setPickerSearch(e.target.value)}
-                  placeholder="Search doctors..."
-                  className="w-full pl-9 pr-3 py-2 rounded-lg border border-[#c9d8d1] text-sm focus:outline-none focus:ring-2 focus:ring-[#0f6e5c]"
-                />
-              </div>
-            </div>
-            <div className="overflow-y-auto p-2">
-              {editSlot.current && (
-                <button
-                  onClick={() => applyPick(null)}
-                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-[#a83a2c] hover:bg-[#f7dfd9] font-medium"
-                >
-                  Remove {doctorName(editSlot.current)} (leave empty)
-                </button>
-              )}
-              {pickerList.length === 0 && (
-                <p className="text-center text-sm text-[#5c6f6a] py-6">No doctors match.</p>
-              )}
-              {pickerList.map(d => (
-                <button
-                  key={d.id}
-                  onClick={() => applyPick(d.id)}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg text-sm hover:bg-[#eef3f0] flex items-center justify-between ${
-                    d.id === editSlot.current ? 'bg-[#dcefe9]' : ''
-                  }`}
-                >
-                  <span className="font-medium text-[#16221f]">{d.name}</span>
-                  <span className="text-[10px] text-[#5c6f6a]">{d.categories.join('/')}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Per-doctor cell picker: choose which station this doctor is on */}
       {docEditCell && selectedDoc && (
