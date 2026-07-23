@@ -10,6 +10,7 @@ export interface Doctor {
   categories: Category[];
   secret: boolean;
   allowedWards: string[];
+  preferredWards: string[];
   cathEligible: boolean;
   cathQuota: number;
   target: number;

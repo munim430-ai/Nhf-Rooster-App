@@ -372,6 +372,12 @@ export function generateRoster(
             const aPair = doubleDutyPair(a.id, day, weekday) ? 1 : 0
             const bPair = doubleDutyPair(b.id, day, weekday) ? 1 : 0
             if (bPair !== aPair) return bPair - aPair
+            // Soft placement bias: a doctor who prefers one of this station's
+            // wards gets first pick here, so they pick up more duties at it —
+            // but eligibility is unchanged, so a station is never left short.
+            const aPref = a.preferredWards?.some(w => station.wards.includes(w)) ? 1 : 0
+            const bPref = b.preferredWards?.some(w => station.wards.includes(w)) ? 1 : 0
+            if (aPref !== bPref) return bPref - aPref
             if (station.wards.includes('Cath')) {
               if (cathCount[a.id] !== cathCount[b.id]) return cathCount[a.id] - cathCount[b.id]
               return Math.random() - 0.5
