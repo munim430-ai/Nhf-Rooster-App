@@ -2,7 +2,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import {
   LayoutDashboard, Users, HeartPulse, Building2, ClipboardList, CalendarCheck,
-  CalendarX, FileSpreadsheet, BarChart3, PiggyBank, StickyNote,
+  CalendarX, FileSpreadsheet, AlertTriangle, BarChart3, PiggyBank, StickyNote,
   Settings, LogOut, Heart
 } from 'lucide-react'
 
@@ -15,6 +15,7 @@ const navItems = [
   { id: 'demands', label: 'Demands', icon: CalendarCheck },
   { id: 'holidays', label: 'Holidays', icon: CalendarX },
   { id: 'generate', label: 'Generate & Export', icon: FileSpreadsheet },
+  { id: 'shortfalls', label: 'Shortfalls', icon: AlertTriangle },
   { id: 'summary', label: 'Summary', icon: BarChart3 },
   { id: 'dutybank', label: 'Duty Bank', icon: PiggyBank },
   { id: 'notes', label: 'Notes', icon: StickyNote },

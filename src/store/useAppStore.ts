@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
   Doctor, Ward, WardGroup, ShiftStations, Demand, Holiday,
   Settings, RosterMeta, RosterEntry, EffectiveStations,
-  FridayNightHistory, DutyBank
+  FridayNightHistory, DutyBank, Shortfall, Improvisation
 } from '@/types'
 
 export interface AppState {
@@ -18,6 +18,8 @@ export interface AppState {
   roster: RosterEntry | null
   effectiveStations: EffectiveStations | null
   warnings: string[]
+  shortfalls: Shortfall[]
+  improvisations: Improvisation[]
   fridayNightHistory: FridayNightHistory
   dutyBank: DutyBank
   secretUnlocked: boolean
@@ -41,6 +43,8 @@ export interface AppActions {
   setRoster: (roster: RosterEntry | null) => void
   setEffectiveStations: (es: EffectiveStations | null) => void
   setWarnings: (warnings: string[]) => void
+  setShortfalls: (s: Shortfall[]) => void
+  setImprovisations: (i: Improvisation[]) => void
   setFridayNightHistory: (h: FridayNightHistory) => void
   setDutyBank: (b: DutyBank) => void
   setSecretUnlocked: (v: boolean) => void
@@ -176,6 +180,8 @@ const initialState: Omit<AppState, keyof AppActions> = {
   roster: null,
   effectiveStations: null,
   warnings: [],
+  shortfalls: [],
+  improvisations: [],
   fridayNightHistory: {},
   dutyBank: {},
   secretUnlocked: false,
@@ -202,6 +208,8 @@ export const useAppStore = create<AppState & AppActions>()(
       setRoster: (roster) => set({ roster }),
       setEffectiveStations: (effectiveStations) => set({ effectiveStations }),
       setWarnings: (warnings) => set({ warnings }),
+      setShortfalls: (shortfalls) => set({ shortfalls }),
+      setImprovisations: (improvisations) => set({ improvisations }),
       setFridayNightHistory: (fridayNightHistory) => set({ fridayNightHistory }),
       setDutyBank: (dutyBank) => set({ dutyBank }),
       setSecretUnlocked: (secretUnlocked) => set({ secretUnlocked }),
@@ -221,6 +229,8 @@ export const useAppStore = create<AppState & AppActions>()(
         roster: state.roster,
         effectiveStations: state.effectiveStations,
         warnings: state.warnings,
+        shortfalls: state.shortfalls,
+        improvisations: state.improvisations,
         fridayNightHistory: state.fridayNightHistory,
         dutyBank: state.dutyBank,
         secretUnlocked: state.secretUnlocked,

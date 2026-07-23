@@ -77,6 +77,28 @@ export interface RosterMeta {
   generatedAt: string | null;
 }
 
+export interface Shortfall {
+  day: number;
+  shift: Shift;
+  stationId: string;
+  stationLabel: string;
+  needed: number;
+  filled: number;
+  missing: number;
+  kind: 'understaffed' | 'demand' | 'slot';
+  reason: string;
+}
+
+export interface Improvisation {
+  day: number;
+  shift: Shift;
+  stationId: string;
+  stationLabel: string;
+  doctorId: string;
+  doctorName: string;
+  reasons: string[];
+}
+
 export interface RosterEntry {
   [day: number]: {
     [shift in Shift]?: {

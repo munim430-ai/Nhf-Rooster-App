@@ -10,7 +10,7 @@ import { MONTHS, SHIFTS, SHIFT_LABEL } from '@/types'
 import type { Shift } from '@/types'
 import {
   Play, Save, FileDown, FileSpreadsheet, FileText, FileType, Printer,
-  AlertTriangle, ChevronDown, ChevronUp, Pencil, X, Search,
+  AlertTriangle, ChevronDown, ChevronUp, Pencil, X, Search, Wand2,
 } from 'lucide-react'
 
 function sleep(ms: number) {
@@ -21,6 +21,7 @@ export default function GeneratePage() {
   const {
     doctors, wards, stations, demands, holidays, meta, setMeta,
     roster, effectiveStations, warnings, setRoster, setEffectiveStations, setWarnings,
+    shortfalls, setShortfalls, setImprovisations, setCurrentNav,
     fridayNightHistory, setFridayNightHistory, dutyBank, setDutyBank, settings,
     secretUnlocked,
   } = useAppStore()
@@ -36,6 +37,7 @@ export default function GeneratePage() {
   const [pickerSearch, setPickerSearch] = useState('')
   const [showWarnings, setShowWarnings] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isAutoFilling, setIsAutoFilling] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [exporting, setExporting] = useState<'pdf' | 'excel' | 'docx' | 'csv' | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
@@ -48,6 +50,18 @@ export default function GeneratePage() {
   const totalStations = SHIFTS.reduce((sum, s) => sum + stations[s].length, 0)
   const canGenerate = activeDoctors.length > 0 && totalStations > 0
 
+  const applyResult = (result: ReturnType<typeof generateRoster>) => {
+    setRoster(result.roster)
+    setEffectiveStations(result.effectiveStations)
+    setWarnings(result.warnings)
+    setShortfalls(result.shortfalls)
+    setImprovisations(result.improvisations)
+    setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
+    setFridayNightHistory({ ...fridayNightHistory, [monthKey(meta.year, meta.month)]: result.fridayNightCount })
+  }
+
+  // Strict generation — places only doctors who satisfy every rule, quota and
+  // target, and leaves the rest empty (listed in the Shortfalls tab).
   const handleGenerate = async () => {
     setIsGenerating(true)
     setSaveMsg('')
@@ -55,14 +69,27 @@ export default function GeneratePage() {
     const result = generateRoster(
       doctors, stations, demands, holidays,
       meta.year, meta.month, daysInMonth,
-      fridayNightHistory, dutyBank
+      fridayNightHistory, dutyBank,
+      { autoFill: false }
     )
-    setRoster(result.roster)
-    setEffectiveStations(result.effectiveStations)
-    setWarnings(result.warnings)
-    setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
-    setFridayNightHistory({ ...fridayNightHistory, [monthKey(meta.year, meta.month)]: result.fridayNightCount })
+    applyResult(result)
     setIsGenerating(false)
+  }
+
+  // Auto-fill — regenerates while relaxing soft rules to staff the empty slots,
+  // recording each bend in the Shortfalls tab as an improvisation.
+  const handleAutoFill = async () => {
+    setIsAutoFilling(true)
+    setSaveMsg('')
+    await sleep(30)
+    const result = generateRoster(
+      doctors, stations, demands, holidays,
+      meta.year, meta.month, daysInMonth,
+      fridayNightHistory, dutyBank,
+      { autoFill: true }
+    )
+    applyResult(result)
+    setIsAutoFilling(false)
   }
 
   const handleSave = async () => {
@@ -333,6 +360,39 @@ export default function GeneratePage() {
                   {warnings.map((w, i) => <li key={i}>&bull; {w}</li>)}
                 </ul>
               )}
+            </div>
+          )}
+
+          {/* Shortfalls / auto-fill banner */}
+          {shortfalls.length > 0 && (
+            <div className="bg-[#f7dfd9] rounded-xl border border-[#e0b4ab] p-4 mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-2 flex-1">
+                  <AlertTriangle className="w-4 h-4 text-[#a83a2c] flex-shrink-0" />
+                  <span className="text-sm text-[#7a2c21]">
+                    <b>{shortfalls.length} shortfall{shortfalls.length === 1 ? '' : 's'}</b> — slots left empty to keep strictly to the rules and demands.
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setCurrentNav('shortfalls')}
+                    className="px-3 py-2 rounded-lg border border-[#a83a2c] text-[#a83a2c] text-xs font-medium hover:bg-[#f2cfc7]"
+                  >
+                    View shortfalls
+                  </button>
+                  <button
+                    onClick={handleAutoFill}
+                    disabled={isAutoFilling}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#a83a2c] text-white text-xs font-medium hover:bg-[#822c21] disabled:opacity-50"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    {isAutoFilling ? 'Filling...' : 'Auto-fill (bend soft rules)'}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-[#7a2c21] mt-2">
+                Auto-fill regenerates the roster, relaxing soft rules (targets, quotas, leave, pacing) to staff the gaps. Every bend is logged in the Shortfalls tab. Hard rules and your demands are never broken.
+              </p>
             </div>
           )}
 
