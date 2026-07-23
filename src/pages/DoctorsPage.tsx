@@ -40,6 +40,7 @@ export default function DoctorsPage() {
   const [formCath, setFormCath] = useState(false)
   const [formCathQuota, setFormCathQuota] = useState(10)
   const [formWards, setFormWards] = useState<string[]>([])
+  const [formPreferredWards, setFormPreferredWards] = useState<string[]>([])
   const [formSecret, setFormSecret] = useState(false)
   const [formOpdMin, setFormOpdMin] = useState(0)
   const [formOpdMax, setFormOpdMax] = useState<number | null>(null)
@@ -62,6 +63,7 @@ export default function DoctorsPage() {
     setFormCath(false)
     setFormCathQuota(10)
     setFormWards([])
+    setFormPreferredWards([])
     setFormSecret(false)
     setFormOpdMin(0)
     setFormOpdMax(null)
@@ -83,6 +85,7 @@ export default function DoctorsPage() {
     setFormCath(doc.cathEligible)
     setFormCathQuota(doc.cathQuota)
     setFormWards([...doc.allowedWards])
+    setFormPreferredWards([...(doc.preferredWards ?? [])])
     setFormSecret(doc.secret)
     setFormOpdMin(doc.opdMin)
     setFormOpdMax(doc.opdMax)
@@ -102,6 +105,7 @@ export default function DoctorsPage() {
       categories: [...formCats],
       secret: formSecret,
       allowedWards: [...formWards],
+      preferredWards: [...formPreferredWards],
       cathEligible: formCath,
       cathQuota: formCathQuota,
       target: formTarget,
@@ -389,6 +393,7 @@ export default function DoctorsPage() {
               {/* Ward restrictions */}
               <div>
                 <label className="block text-xs text-[#5c6f6a] mb-2">Ward Restrictions (optional)</label>
+                <p className="text-[11px] text-[#5c6f6a] -mt-1 mb-2">Hard limit — the doctor is only ever placed at these wards.</p>
                 <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 border border-[#c9d8d1] rounded-lg">
                   {activeWards.map(w => (
                     <label key={w.id} className="flex items-center gap-1.5 text-xs px-2 py-1">
@@ -399,6 +404,30 @@ export default function DoctorsPage() {
                           setFormWards(e.target.checked
                             ? [...formWards, w.name]
                             : formWards.filter(x => x !== w.name)
+                          )
+                        }}
+                        className="accent-[#0f6e5c]"
+                      />
+                      {w.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preferred wards (soft placement bias) */}
+              <div>
+                <label className="block text-xs text-[#5c6f6a] mb-2">Preferred Wards (bias, optional)</label>
+                <p className="text-[11px] text-[#5c6f6a] -mt-1 mb-2">Soft — the generator gives this doctor more duties at these wards when possible, but can still place them elsewhere.</p>
+                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 border border-[#c9d8d1] rounded-lg">
+                  {activeWards.map(w => (
+                    <label key={w.id} className="flex items-center gap-1.5 text-xs px-2 py-1">
+                      <input
+                        type="checkbox"
+                        checked={formPreferredWards.includes(w.name)}
+                        onChange={e => {
+                          setFormPreferredWards(e.target.checked
+                            ? [...formPreferredWards, w.name]
+                            : formPreferredWards.filter(x => x !== w.name)
                           )
                         }}
                         className="accent-[#0f6e5c]"

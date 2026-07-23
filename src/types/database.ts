@@ -46,6 +46,7 @@ export interface Database {
           categories: string[]
           secret: boolean
           allowed_wards: string[]
+          preferred_wards: string[]
           cath_eligible: boolean
           cath_quota: number
           target: number
@@ -64,6 +65,7 @@ export interface Database {
           categories?: string[]
           secret?: boolean
           allowed_wards?: string[]
+          preferred_wards?: string[]
           cath_eligible?: boolean
           cath_quota?: number
           target?: number
@@ -82,6 +84,7 @@ export interface Database {
           categories?: string[]
           secret?: boolean
           allowed_wards?: string[]
+          preferred_wards?: string[]
           cath_eligible?: boolean
           cath_quota?: number
           target?: number
