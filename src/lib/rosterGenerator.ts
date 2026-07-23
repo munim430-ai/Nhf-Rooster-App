@@ -272,6 +272,12 @@ export function generateRoster(
       roster[day][shift] = {}
       const usedThisShift = new Set<string>()
       let dayStations = holidayAdjustedStations(shift, holidayToday).filter(s => s.needed > 0)
+      // Display order: the Observation ward always comes first in the chart
+      // (all views and exports read this order); the rest keep their order.
+      dayStations = [
+        ...dayStations.filter(s => s.wards.includes('Observation')),
+        ...dayStations.filter(s => !s.wards.includes('Observation')),
+      ]
       effectiveStations[day][shift] = dayStations
 
       dayStations = [...dayStations].sort((a, b) => staticEligibleCount(a) - staticEligibleCount(b))
