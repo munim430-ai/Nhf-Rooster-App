@@ -11,6 +11,7 @@ import type { Shift } from '@/types'
 import {
   Play, Save, FileDown, FileSpreadsheet, FileText, FileType, Printer,
   AlertTriangle, ChevronDown, ChevronUp, Pencil, X, Search, Wand2,
+  CalendarRange, FilePlus2, ListChecks,
 } from 'lucide-react'
 
 function sleep(ms: number) {
@@ -37,8 +38,16 @@ export default function GeneratePage() {
   const [docEditCell, setDocEditCell] = useState<{ day: number; shift: Shift } | null>(null)
   const [showWarnings, setShowWarnings] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isManual, setIsManual] = useState(false)
+  const [isCompleting, setIsCompleting] = useState(false)
   const [isAutoFilling, setIsAutoFilling] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  // Day range to generate (within the selected month). Defaults to the whole month.
+  const [rangeStart, setRangeStart] = useState(1)
+  const [rangeEnd, setRangeEnd] = useState(31)
+  // Month/year the in-state roster was generated for — so a partial-range
+  // generation or "complete" never mixes another month's duties into this one.
+  const [rosterKey, setRosterKey] = useState('')
   const [exporting, setExporting] = useState<'pdf' | 'excel' | 'docx' | 'csv' | null>(null)
   const [saveMsg, setSaveMsg] = useState('')
 
@@ -58,10 +67,34 @@ export default function GeneratePage() {
     setImprovisations(result.improvisations)
     setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
     setFridayNightHistory({ ...fridayNightHistory, [monthKey(meta.year, meta.month)]: result.fridayNightCount })
+    setRosterKey(monthKey(meta.year, meta.month))
+  }
+
+  // Does the currently-displayed roster belong to the selected month?
+  const rosterMatchesMonth = !!roster && rosterKey === monthKey(meta.year, meta.month)
+
+  // Clamp the chosen day range to the selected month.
+  const clampedStart = Math.min(Math.max(1, rangeStart), daysInMonth)
+  const clampedEnd = Math.min(Math.max(clampedStart, rangeEnd), daysInMonth)
+  const isWholeMonth = clampedStart === 1 && clampedEnd === daysInMonth
+
+  // Reset the range whenever the target month/year changes.
+  const changeMonth = (m: number) => {
+    setMeta({ ...meta, month: m })
+    setRangeStart(1)
+    setRangeEnd(new Date(meta.year, m, 0).getDate())
+  }
+  const changeYear = (y: number) => {
+    setMeta({ ...meta, year: y })
+    setRangeStart(1)
+    setRangeEnd(new Date(y, meta.month, 0).getDate())
   }
 
   // Strict generation — places only doctors who satisfy every rule, quota and
-  // target, and leaves the rest empty (listed in the Shortfalls tab).
+  // target, and leaves the rest empty (listed in the Shortfalls tab). When a
+  // partial day range is chosen, only those days are (re)generated; any existing
+  // duties on the other days of the month are kept and still count toward
+  // targets, quotas and the rest rules.
   const handleGenerate = async () => {
     setIsGenerating(true)
     setSaveMsg('')
@@ -70,27 +103,67 @@ export default function GeneratePage() {
       doctors, stations, demands, holidays,
       meta.year, meta.month, daysInMonth,
       fridayNightHistory, dutyBank,
-      { autoFill: false }
+      {
+        autoFill: false,
+        startDay: clampedStart,
+        endDay: clampedEnd,
+        ...(isWholeMonth || !rosterMatchesMonth
+          ? {}
+          : { baseRoster: roster || undefined, baseEffectiveStations: effectiveStations || undefined }),
+      }
     )
     applyResult(result)
     setIsGenerating(false)
   }
 
-  // Auto-fill — regenerates while relaxing soft rules to staff the empty slots,
-  // recording each bend in the Shortfalls tab as an improvisation.
-  const handleAutoFill = async () => {
-    setIsAutoFilling(true)
+  // Manual entry — build the empty scaffold (stations exposed, nobody assigned)
+  // for the chosen range so the whole roster can be filled by hand, then open
+  // the per-doctor editor.
+  const handleManual = async () => {
+    setIsManual(true)
     setSaveMsg('')
     await sleep(30)
     const result = generateRoster(
       doctors, stations, demands, holidays,
       meta.year, meta.month, daysInMonth,
       fridayNightHistory, dutyBank,
-      { autoFill: true }
+      { scaffoldOnly: true, startDay: clampedStart, endDay: clampedEnd }
     )
     applyResult(result)
-    setIsAutoFilling(false)
+    setEditMode(true)
+    setIsManual(false)
   }
+
+  // Continue / complete — keep every existing duty (auto-generated or hand-entered)
+  // and fill only the empty slots across the whole month, using the same rules.
+  // `relax` true additionally bends the soft rules (auto-fill), logging each in
+  // the Shortfalls tab; false leaves a slot empty rather than break a soft rule.
+  const handleComplete = async (relax: boolean) => {
+    if (!roster || !effectiveStations || !rosterMatchesMonth) return
+    if (relax) setIsAutoFilling(true)
+    else setIsCompleting(true)
+    setSaveMsg('')
+    await sleep(30)
+    const result = generateRoster(
+      doctors, stations, demands, holidays,
+      meta.year, meta.month, daysInMonth,
+      fridayNightHistory, dutyBank,
+      {
+        autoFill: relax,
+        startDay: 1,
+        endDay: daysInMonth,
+        baseRoster: roster,
+        baseEffectiveStations: effectiveStations,
+        preserveExisting: true,
+      }
+    )
+    applyResult(result)
+    if (relax) setIsAutoFilling(false)
+    else setIsCompleting(false)
+  }
+
+  // Auto-fill preserves existing placements and bends soft rules for the gaps.
+  const handleAutoFill = () => handleComplete(true)
 
   const handleSave = async () => {
     if (!roster || !effectiveStations) return
@@ -280,32 +353,98 @@ export default function GeneratePage() {
         <p className="text-sm text-[#5c6f6a] mt-1">Build the month's roster and export it as PDF, Excel, Word, or CSV</p>
       </div>
 
-      {/* Month selector + pre-flight */}
+      {/* Month selector + range + pre-flight */}
       <div className="bg-white rounded-xl border border-[#c9d8d1] p-5 mb-4">
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="flex flex-col sm:flex-row gap-3 mb-3">
           <select
             value={meta.month}
-            onChange={e => setMeta({ ...meta, month: parseInt(e.target.value) })}
+            onChange={e => changeMonth(parseInt(e.target.value))}
             className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm"
           >
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
           <select
             value={meta.year}
-            onChange={e => setMeta({ ...meta, year: parseInt(e.target.value) })}
+            onChange={e => changeYear(parseInt(e.target.value))}
             className="px-3 py-2.5 rounded-lg border border-[#c9d8d1] text-sm"
           >
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+        </div>
+
+        {/* Day range within the month */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-4">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-[#5c6f6a]">
+            <CalendarRange className="w-4 h-4" /> Day range
+          </span>
+          <div className="flex items-center gap-2">
+            <select
+              value={clampedStart}
+              onChange={e => setRangeStart(parseInt(e.target.value))}
+              className="px-2.5 py-2 rounded-lg border border-[#c9d8d1] text-sm"
+            >
+              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <span className="text-xs text-[#5c6f6a]">to</span>
+            <select
+              value={clampedEnd}
+              onChange={e => setRangeEnd(parseInt(e.target.value))}
+              className="px-2.5 py-2 rounded-lg border border-[#c9d8d1] text-sm"
+            >
+              {Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => d >= clampedStart).map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          {!isWholeMonth && (
+            <button
+              onClick={() => { setRangeStart(1); setRangeEnd(daysInMonth) }}
+              className="text-xs text-[#0f6e5c] font-medium hover:underline sm:ml-1"
+            >
+              Whole month
+            </button>
+          )}
+          <span className="text-[11px] text-[#5c6f6a] sm:ml-auto">
+            {isWholeMonth
+              ? `Full month (${daysInMonth} days)`
+              : `Days ${clampedStart}–${clampedEnd} · other days kept as-is`}
+          </span>
+        </div>
+
+        {/* Generation actions */}
+        <div className="flex flex-wrap gap-2 mb-4">
           <button
             onClick={handleGenerate}
             disabled={!canGenerate || isGenerating}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] disabled:opacity-50 sm:ml-auto"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-[#0f6e5c] text-white text-sm font-medium hover:bg-[#0a4f42] disabled:opacity-50"
           >
             <Play className="w-4 h-4" />
-            {isGenerating ? 'Generating...' : roster ? 'Regenerate Roster' : 'Generate Roster'}
+            {isGenerating
+              ? 'Generating...'
+              : isWholeMonth
+                ? (roster ? 'Regenerate Roster' : 'Generate Roster')
+                : `Generate Days ${clampedStart}–${clampedEnd}`}
           </button>
+          <button
+            onClick={handleManual}
+            disabled={!canGenerate || isManual}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
+            title="Start with an empty roster and fill it in by hand"
+          >
+            <FilePlus2 className="w-4 h-4" />
+            {isManual ? 'Preparing...' : 'Start Blank (Manual)'}
+          </button>
+          {roster && rosterMatchesMonth && (
+            <button
+              onClick={() => handleComplete(false)}
+              disabled={isCompleting}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[#0f6e5c] text-[#0f6e5c] text-sm font-medium hover:bg-[#dcefe9] disabled:opacity-50"
+              title="Keep every existing duty and fill only the empty slots"
+            >
+              <ListChecks className="w-4 h-4" />
+              {isCompleting ? 'Completing...' : 'Complete Empty Slots'}
+            </button>
+          )}
         </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-[#5c6f6a]">
           <div>{activeDoctors.length} active doctors</div>
           <div>{totalStations} stations</div>
@@ -367,7 +506,7 @@ export default function GeneratePage() {
                 </div>
               </div>
               <p className="text-[11px] text-[#7a2c21] mt-2">
-                Auto-fill regenerates the roster, relaxing soft rules (targets, quotas, leave, pacing) to staff the gaps. Every bend is logged in the Shortfalls tab. Hard rules and your demands are never broken.
+                Auto-fill keeps every existing duty and only fills the empty slots, relaxing soft rules (targets, quotas, leave, pacing) to do so. Every bend is logged in the Shortfalls tab. Hard rules and your demands are never broken.
               </p>
             </div>
           )}
