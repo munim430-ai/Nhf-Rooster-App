@@ -30,6 +30,35 @@ export interface GenerateOptions {
    * improvisation.
    */
   autoFill?: boolean
+  /**
+   * First day of the month (inclusive) to generate. Defaults to 1. Days outside
+   * [startDay, endDay] are taken from baseRoster (if given) and left untouched.
+   */
+  startDay?: number
+  /** Last day of the month (inclusive) to generate. Defaults to `days`. */
+  endDay?: number
+  /**
+   * An existing (possibly partial) roster to build on. Duties outside the
+   * generated day range are always kept. Inside the range they are kept when
+   * `preserveExisting` is true, otherwise the range is regenerated from scratch.
+   * Either way, every existing duty counts toward monthly targets, quotas, and
+   * the night-rest / one-shift-per-day rules.
+   */
+  baseRoster?: RosterEntry
+  /** Effective stations paired with baseRoster — used to read ward info for existing duties. */
+  baseEffectiveStations?: EffectiveStations
+  /**
+   * When true, keep the existing in-range duties and only fill the empty slots
+   * ("continue / complete a partial roster"). When false (default), regenerate
+   * the in-range days from scratch.
+   */
+  preserveExisting?: boolean
+  /**
+   * When true, build only the effective-stations scaffold and an empty roster —
+   * no automatic assignment at all — so the roster can be filled entirely by
+   * hand (manual entry).
+   */
+  scaffoldOnly?: boolean
 }
 
 export function generateRoster(
@@ -45,6 +74,15 @@ export function generateRoster(
   options: GenerateOptions = {}
 ): GenerationResult {
   const autoFill = options.autoFill ?? false
+  const scaffoldOnly = options.scaffoldOnly ?? false
+  const preserveExisting = options.preserveExisting ?? false
+  const baseRoster = options.baseRoster
+  const baseEffectiveStations = options.baseEffectiveStations
+  const startDay = Math.max(1, options.startDay ?? 1)
+  const endDay = Math.min(days, options.endDay ?? days)
+  // Night is placed first, then the day shifts (see the main loop). The same
+  // order is used when replaying existing duties so streak/rest state matches.
+  const SHIFT_ORDER: Shift[] = ['night', 'morning', 'evening']
   const activeDoctors = doctors.filter(d => d.active)
   const assignedCount: Record<string, number> = {}
   const nightCount: Record<string, number> = {}
@@ -123,6 +161,33 @@ export function generateRoster(
   }
   function isEMO(d: Doctor): boolean {
     return d.categories.includes('EMO')
+  }
+
+  // Accounting helpers, shared between fresh placement (assignOne), the replay
+  // of existing duties (continue/complete), and the out-of-range seed pass.
+  // `accountCumulative` updates the month-total counters that drive targets,
+  // quotas and balancing; `accountSequential` updates the day-ordered state that
+  // drives night-rest, pacing and same-shift streaks.
+  function accountCumulative(d: Doctor, shift: Shift, station: Station, weekday: number) {
+    assignedCount[d.id]++
+    shiftTypeCount[d.id][shift]++
+    if (shift === 'night') nightCount[d.id]++
+    if (station.wards.includes('Cath')) cathCount[d.id]++
+    if (isOpdStation(station)) opdCount[d.id]++
+    if (station.wards.includes('Observation')) obsCount[d.id]++
+    if (station.wards.includes('3A') || station.wards.includes('DS 15A')) threeACount[d.id]++
+    if (station.wards.includes('7')) ward7Count[d.id]++
+    if (shift === 'night' && weekday === 5) fridayNightCount[d.id]++
+  }
+  function accountSequential(d: Doctor, day: number, shift: Shift) {
+    if (lastShiftWorked[d.id] === shift && lastDayWorked[d.id] !== undefined) {
+      sameShiftStreak[d.id] = (sameShiftStreak[d.id] || 1) + 1
+    } else {
+      sameShiftStreak[d.id] = 1
+    }
+    lastShiftWorked[d.id] = shift
+    lastDayWorked[d.id] = day
+    if (shift === 'night') lastNightDay[d.id] = day
   }
 
   function seniorConflict(d: Doctor, chosenSoFar: Doctor[]): boolean {
@@ -261,7 +326,58 @@ export function generateRoster(
     return list
   }
 
-  for (let day = 1; day <= days; day++) {
+  // Carry existing duties (and their stations) into this generation. Days
+  // outside the generated range are left exactly as they were; in-range days
+  // are re-inserted per shift below when preserveExisting is set.
+  if (baseRoster) {
+    Object.keys(baseRoster).forEach(dk => {
+      const dayNum = Number(dk)
+      roster[dayNum] = {}
+      SHIFTS.forEach(sh => {
+        const cell = baseRoster[dayNum]?.[sh]
+        if (!cell) return
+        const copy: Record<string, string[]> = {}
+        Object.keys(cell).forEach(st => { copy[st] = [...cell[st]] })
+        roster[dayNum][sh] = copy
+      })
+    })
+  }
+  if (baseEffectiveStations) {
+    Object.keys(baseEffectiveStations).forEach(dk => {
+      const dayNum = Number(dk)
+      effectiveStations[dayNum] = {}
+      SHIFTS.forEach(sh => {
+        const list = baseEffectiveStations[dayNum]?.[sh]
+        if (list) effectiveStations[dayNum][sh] = list.map(s => ({ ...s, wards: [...s.wards] }))
+      })
+    })
+  }
+
+  // Seed the counters from existing duties that fall OUTSIDE the generated range
+  // so monthly targets/quotas and (for the fixed prefix) night-rest/pacing see
+  // them. In-range existing duties are accounted during the loop instead.
+  if (baseRoster) {
+    for (let day = 1; day <= days; day++) {
+      if (day >= startDay && day <= endDay) continue
+      const weekday = new Date(year, month - 1, day).getDay()
+      SHIFT_ORDER.forEach(shift => {
+        const cell = baseRoster[day]?.[shift]
+        if (!cell) return
+        const effList = baseEffectiveStations?.[day]?.[shift] || []
+        Object.keys(cell).forEach(stId => {
+          const station = effList.find(s => s.id === stId) || { id: stId, label: stId, wards: [] as string[], needed: 0 }
+          cell[stId].forEach(docId => {
+            const d = doctorById[docId]
+            if (!d) return
+            accountCumulative(d, shift, station, weekday)
+            if (day < startDay) accountSequential(d, day, shift)
+          })
+        })
+      })
+    }
+  }
+
+  for (let day = startDay; day <= endDay; day++) {
     const weekday = new Date(year, month - 1, day).getDay()
     const holidayToday = isHolidayDay(day, year, month, holidays)
     roster[day] = {}
@@ -271,8 +387,7 @@ export function generateRoster(
     // HARD priority: fill night duties first, then the day shifts. OPD stations
     // are prioritised within each shift (below). This keeps the critical
     // night/OPD requirements from being starved by ordinary day duties.
-    const shiftOrder: Shift[] = ['night', 'morning', 'evening']
-    shiftOrder.forEach(shift => {
+    SHIFT_ORDER.forEach(shift => {
       roster[day][shift] = {}
       const usedThisShift = new Set<string>()
       let dayStations = holidayAdjustedStations(shift, holidayToday).filter(s => s.needed > 0)
@@ -283,6 +398,30 @@ export function generateRoster(
         ...dayStations.filter(s => !s.wards.includes('Observation')),
       ]
       effectiveStations[day][shift] = dayStations
+
+      // Manual scaffold: expose the stations but assign nobody.
+      if (scaffoldOnly) return
+
+      // Continue / complete: keep the existing in-range duties for this shift and
+      // only fill the empty slots below. Account them so targets, rest and
+      // double-duty rules see them.
+      if (preserveExisting && baseRoster) {
+        const baseCell = baseRoster[day]?.[shift] || {}
+        dayStations.forEach(st => {
+          const existing = baseCell[st.id]
+          if (!existing || existing.length === 0) return
+          existing.forEach(docId => {
+            const d = doctorById[docId]
+            if (!d || usedThisShift.has(d.id)) return
+            roster[day][shift]![st.id] = [...(roster[day][shift]![st.id] || []), d.id]
+            usedThisShift.add(d.id)
+            assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
+            accountCumulative(d, shift, st, weekday)
+            accountSequential(d, day, shift)
+            if (isOnLeave(d.id, day)) leaveOverrides.push({ day, shift, doctorId: d.id })
+          })
+        })
+      }
 
       dayStations = [...dayStations].sort((a, b) => staticEligibleCount(a) - staticEligibleCount(b))
 
@@ -307,7 +446,9 @@ export function generateRoster(
             needed: 1, filled: 0, missing: 1, kind: 'demand', reason: msg,
           })
         }
-        if (usedThisShift.has(d.id)) return skip('already assigned elsewhere this shift.')
+        // In continue/complete mode the doctor may already hold a preserved duty
+        // this shift (possibly this very fixed assignment) — treat as satisfied.
+        if (usedThisShift.has(d.id)) return preserveExisting ? undefined : skip('already assigned elsewhere this shift.')
         if (lastNightDay[d.id] === day - 1) return skip('mandatory rest after night shift.')
         const alreadyToday = assignedTodayMap[d.id] || []
         if (alreadyToday.length > 0) {
@@ -490,23 +631,9 @@ export function generateRoster(
 
         function assignOne(d: Doctor) {
           usedThisShift.add(d.id)
-          assignedCount[d.id]++
-          shiftTypeCount[d.id][shift]++
           assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
-          if (lastShiftWorked[d.id] === shift && lastDayWorked[d.id] !== undefined) {
-            sameShiftStreak[d.id] = (sameShiftStreak[d.id] || 1) + 1
-          } else {
-            sameShiftStreak[d.id] = 1
-          }
-          lastShiftWorked[d.id] = shift
-          lastDayWorked[d.id] = day
-          if (shift === 'night') { nightCount[d.id]++; lastNightDay[d.id] = day }
-          if (station.wards.includes('Cath')) cathCount[d.id]++
-          if (isOpdStation(station)) opdCount[d.id]++
-          if (station.wards.includes('Observation')) obsCount[d.id]++
-          if (station.wards.includes('3A') || station.wards.includes('DS 15A')) threeACount[d.id]++
-          if (station.wards.includes('7')) ward7Count[d.id]++
-          if (shift === 'night' && weekday === 5) fridayNightCount[d.id]++
+          accountCumulative(d, shift, station, weekday)
+          accountSequential(d, day, shift)
           if (isOnLeave(d.id, day)) leaveOverrides.push({ day, shift, doctorId: d.id })
           roster[day][shift]![station.id] = [...(roster[day][shift]![station.id] || []), d.id]
         }
