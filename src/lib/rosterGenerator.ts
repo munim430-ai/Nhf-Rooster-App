@@ -373,6 +373,27 @@ export function generateRoster(
     })
   }
 
+  // In preserve/complete mode the shifts of a day are filled in night→morning→
+  // evening order, so when filling one shift the generator can't yet "see" the
+  // preserved duties of the day's other shifts (or the neighbouring days). Index
+  // every preserved duty up front so eligibility can honour the hard rest and
+  // one-shift-per-day rules against them regardless of processing order.
+  const preservedDayShifts: Record<string, Record<number, Shift[]>> = {}
+  if (preserveExisting && baseRoster) {
+    activeDoctors.forEach(d => { preservedDayShifts[d.id] = {} })
+    Object.keys(baseRoster).forEach(dk => {
+      const day = Number(dk)
+      SHIFTS.forEach(sh => {
+        const cell = baseRoster[day]?.[sh]
+        if (!cell) return
+        Object.values(cell).forEach(ids => ids.forEach(id => {
+          if (!preservedDayShifts[id]) return
+          ;(preservedDayShifts[id][day] = preservedDayShifts[id][day] || []).push(sh)
+        }))
+      })
+    })
+  }
+
   // Seed the counters from existing duties that fall OUTSIDE the generated range
   // so monthly targets/quotas and (for the fixed prefix) night-rest/pacing see
   // them. In-range existing duties are accounted during the loop instead.
@@ -531,6 +552,25 @@ export function generateRoster(
               // order (evening→night or night→evening).
               if (pair === 'ME' && !(lastLeg === 'morning' && shift === 'evening')) return false
               if (pair === 'EN' && !((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))) return false
+            }
+            // Preserve/complete: honour the hard rest and one-shift-per-day rules
+            // against existing duties the shift-by-shift order hasn't surfaced yet
+            // (this day's other shifts, and the neighbouring days).
+            if (preserveExisting) {
+              const ps = preservedDayShifts[d.id]
+              if (ps) {
+                for (const psh of ps[day] || []) {
+                  if (psh === shift || already.includes(psh)) continue
+                  const pair = doubleDutyPair(d.id, day, weekday)
+                  const okDouble = (pair === 'ME' && ((psh === 'morning' && shift === 'evening') || (psh === 'evening' && shift === 'morning')))
+                    || (pair === 'EN' && ((psh === 'evening' && shift === 'night') || (psh === 'night' && shift === 'evening')))
+                  if (!okDouble) return false
+                }
+                // Rest after night, both directions: no night today if a duty is
+                // kept tomorrow; no duty today if a night is kept yesterday.
+                if (shift === 'night' && (ps[day + 1] || []).length > 0) return false
+                if ((ps[day - 1] || []).includes('night')) return false
+              }
             }
             if (shift === 'morning') {
               const already2 = assignedTodayMap[d.id] || []
