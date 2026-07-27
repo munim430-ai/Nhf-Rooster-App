@@ -1,4 +1,4 @@
-import type { Doctor, RosterEntry, EffectiveStations, Holiday, Shift } from '@/types'
+import type { Doctor, RosterEntry, EffectiveStations, Holiday, Shift, Station } from '@/types'
 import { SHIFTS, SHIFT_LABEL, MONTHS } from '@/types'
 import { computeRosterStats } from '@/lib/rosterStats'
 import { stationDisplayLabel, isHolidayDay } from '@/lib/utils'
@@ -16,11 +16,6 @@ export interface RosterExportContext {
   warnings: string[]
 }
 
-const SHIFT_TITLE: Record<Shift, string> = {
-  morning: 'Morning',
-  evening: 'Evening',
-  night: 'Night',
-}
 
 function fileStem(year: number, month: number): string {
   return `roster-${year}-${String(month).padStart(2, '0')}`
@@ -117,41 +112,125 @@ export function exportRosterCsv(ctx: RosterExportContext): void {
 }
 
 // ---------------------------------------------------------------------------
-// Excel (.xlsx)
+// Excel (.xlsx) — the hospital's traditional three-block layout
+// (Morning | Evening | Night side by side; one row per day; each ward column
+// spans as many sub-columns as it takes doctors; cells hold doctor names).
 // ---------------------------------------------------------------------------
+interface TemplateCol { label: string; wards: string[] | null; width: number }
+interface TemplateBlock { shift: Shift; title: string; cols: TemplateCol[] }
+
+const TEMPLATE_BLOCKS: TemplateBlock[] = [
+  {
+    shift: 'morning', title: 'Morning (8:00 AM to 2:30 PM)', cols: [
+      { label: 'Observation', wards: ['Observation'], width: 2 },
+      { label: 'OPD A', wards: ['OPD A'], width: 1 }, { label: 'OPD B', wards: ['OPD B'], width: 1 },
+      { label: 'OPD C', wards: ['OPD C'], width: 1 }, { label: 'HTN', wards: ['HTN'], width: 1 },
+      { label: 'W-7(CCU-2)', wards: ['7'], width: 2 }, { label: 'W-3A', wards: ['3A'], width: 2 },
+      { label: 'W-3B', wards: ['3B'], width: 1 }, { label: 'W-5B', wards: ['5B'], width: 1 },
+      { label: 'W-5D', wards: ['5D'], width: 1 }, { label: 'W-5A', wards: ['5A'], width: 1 },
+      { label: 'W-5C', wards: ['5C'], width: 1 }, { label: 'Cabin', wards: ['Cabin'], width: 1 },
+      { label: 'W-9', wards: ['9'], width: 1 }, { label: 'W10', wards: ['10'], width: 1 },
+      { label: 'W12', wards: ['12'], width: 1 }, { label: 'DS 15A', wards: ['DS 15A'], width: 2 },
+      { label: 'DS 15B', wards: ['DS 15B'], width: 1 }, { label: 'DS 15C', wards: ['DS 15C'], width: 1 },
+      { label: 'DS W-8', wards: ['DS 8'], width: 1 }, { label: 'DS W-9A', wards: ['DS 9A'], width: 1 },
+      { label: 'DS W-9B', wards: ['DS 9B'], width: 2 },
+    ],
+  },
+  {
+    shift: 'evening', title: 'Evening (2:30 PM to 9:00 PM)', cols: [
+      { label: 'Observation', wards: ['Observation'], width: 2 }, { label: 'OPD A', wards: ['OPD A'], width: 1 },
+      { label: 'W-7(CCU-2)', wards: ['7'], width: 2 }, { label: 'W-3A', wards: ['3A'], width: 2 },
+      { label: 'W-3B', wards: ['3B'], width: 1 }, { label: 'Cath Lab', wards: ['Cath'], width: 1 },
+      { label: 'W-5B', wards: ['5B'], width: 1 }, { label: 'W-5D', wards: ['5D'], width: 1 },
+      { label: 'W- A+C', wards: ['5A', '5C'], width: 1 }, { label: 'W-9+Cabin', wards: ['9', 'Cabin'], width: 1 },
+      { label: 'W-10', wards: ['10'], width: 1 }, { label: 'W-12', wards: ['12'], width: 1 },
+      { label: 'DS 15A', wards: ['DS 15A'], width: 2 }, { label: 'DS 15B', wards: ['DS 15B'], width: 1 },
+      { label: 'DS 15C', wards: ['DS 15C'], width: 1 }, { label: 'DS W-8', wards: ['DS 8'], width: 1 },
+      { label: 'DS W-9A', wards: ['DS 9A'], width: 1 }, { label: 'DS W-9B', wards: ['DS 9B'], width: 2 },
+    ],
+  },
+  {
+    shift: 'night', title: 'Night (9:00 PM-8:00 AM)', cols: [
+      { label: 'Observation', wards: ['Observation'], width: 1 }, { label: 'W-7(CCU-2)', wards: ['7'], width: 2 },
+      { label: 'W-3A', wards: ['3A'], width: 1 }, { label: 'W3B', wards: ['3B'], width: 1 },
+      { label: 'W5A+B', wards: ['5A', '5B'], width: 1 }, { label: 'W5C+D', wards: ['5C', '5D'], width: 1 },
+      { label: 'W9+Cabin+ Obs', wards: ['9', 'Cabin'], width: 1 }, { label: 'W10+12', wards: ['10', '12'], width: 1 },
+      { label: 'DS15A', wards: ['DS 15A'], width: 1 }, { label: 'DS15B', wards: ['DS 15B'], width: 1 },
+      { label: 'DS15C', wards: ['DS 15C'], width: 1 }, { label: 'DS W8', wards: ['DS 8'], width: 1 },
+      { label: 'DS W9A+B', wards: ['DS 9A', 'DS 9B'], width: 1 }, { label: 'Consultant', wards: null, width: 1 },
+    ],
+  },
+]
+
+// Find the station for a template column on a given day/shift: exact ward-set
+// match first, then a station whose wards are a subset/superset (covers the
+// holiday-merged 9+Cabin). `used` prevents one station filling two columns.
+function stationForTemplateCol(stList: Station[], wards: string[], used: Set<string>): Station | undefined {
+  const target = [...wards].sort().join('|')
+  let st = stList.find(s => !used.has(s.id) && [...s.wards].sort().join('|') === target)
+  if (!st) st = stList.find(s => !used.has(s.id) && (s.wards.every(w => wards.includes(w)) || wards.every(w => s.wards.includes(w))))
+  return st
+}
+
 export async function exportRosterExcel(ctx: RosterExportContext): Promise<void> {
   const XLSX = await import('xlsx')
   const wb = XLSX.utils.book_new()
-  const nameOf = (id: string) => ctx.doctors.find(d => d.id === id)?.name || '—'
+  const nameOf = (id: string) => ctx.doctors.find(d => d.id === id)?.name || ''
 
-  // One sheet per shift: rows = days, columns = stations, cells = doctor names.
-  SHIFTS.forEach(shift => {
-    const cols = shiftColumns(ctx, shift)
-    const header = ['Day', 'Weekday', 'Holiday', ...cols.map(c => c.label)]
-    const rows: (string | number)[][] = [header]
+  const blockWidths = TEMPLATE_BLOCKS.map(b => 2 + b.cols.reduce((s, c) => s + c.width, 0))
+  const blockStart: number[] = []
+  let totalWidth = 0
+  TEMPLATE_BLOCKS.forEach((_, i) => { blockStart[i] = totalWidth; totalWidth += blockWidths[i] })
 
-    for (let day = 1; day <= ctx.days; day++) {
-      const holiday = isHolidayDay(day, ctx.year, ctx.month, ctx.holidays)
-      const row: (string | number)[] = [
-        day,
-        weekdayShort(ctx.year, ctx.month, day),
-        holiday ? 'Holiday' : '',
-      ]
-      cols.forEach(col => {
-        const ids = ctx.roster[day]?.[shift]?.[col.id] || []
-        row.push(ids.map(nameOf).join(', '))
-      })
-      rows.push(row)
-    }
+  const aoa: (string | number | null)[][] = []
+  const put = (r: number, c: number, v: string | number) => {
+    while (aoa.length <= r) aoa.push([])
+    const row = aoa[r]
+    while (row.length <= c) row.push(null)
+    row[c] = v
+  }
+  const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = []
 
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = [
-      { wch: 5 }, { wch: 9 }, { wch: 9 },
-      ...cols.map(() => ({ wch: 18 })),
-    ]
-    ws['!freeze'] = { xSplit: 3, ySplit: 1 } as unknown as (typeof ws)['!freeze']
-    XLSX.utils.book_append_sheet(wb, ws, SHIFT_TITLE[shift])
+  put(0, 0, ctx.hospitalName)
+  put(1, 0, `1-${ctx.days} ${MONTHS[ctx.month - 1]} ${ctx.year}`)
+  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: totalWidth - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: totalWidth - 1 } })
+
+  TEMPLATE_BLOCKS.forEach((b, i) => {
+    merges.push({ s: { r: 2, c: blockStart[i] }, e: { r: 2, c: blockStart[i] + blockWidths[i] - 1 } })
+    put(2, blockStart[i], b.title)
+    let c = blockStart[i]
+    put(3, c++, 'Date'); put(3, c++, 'Day')
+    b.cols.forEach(col => { put(3, c, col.label); if (col.width > 1) merges.push({ s: { r: 3, c }, e: { r: 3, c: c + col.width - 1 } }); c += col.width })
   })
+
+  for (let day = 1; day <= ctx.days; day++) {
+    const r = 3 + day // row index 4 == day 1
+    const weekday = new Date(ctx.year, ctx.month - 1, day).toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
+    const dateStr = `${ctx.year % 100}.${ctx.month}.${day}`
+    TEMPLATE_BLOCKS.forEach((b, i) => {
+      let c = blockStart[i]
+      put(r, c++, dateStr); put(r, c++, weekday)
+      const stList = ctx.effectiveStations[day]?.[b.shift] || []
+      const used = new Set<string>()
+      b.cols.forEach(col => {
+        const base = c; c += col.width
+        if (!col.wards) return
+        const st = stationForTemplateCol(stList, col.wards, used)
+        if (!st) return
+        used.add(st.id)
+        const names = (ctx.roster[day]?.[b.shift]?.[st.id] || []).map(nameOf).filter(Boolean)
+        names.forEach((nm, k) => {
+          if (k < col.width) put(r, base + k, nm)
+          else { const last = base + col.width - 1; put(r, last, `${aoa[r][last] || ''}, ${nm}`) }
+        })
+      })
+    })
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  ws['!merges'] = merges
+  ws['!cols'] = Array.from({ length: totalWidth }, () => ({ wch: 9 }))
+  XLSX.utils.book_append_sheet(wb, ws, 'Roster')
 
   // Summary sheet: per-doctor totals against target.
   const stats = computeRosterStats(ctx.roster, ctx.effectiveStations)
@@ -209,20 +288,51 @@ export interface RosterImportResult {
   missingStations: string[]
 }
 
-const IMPORT_SHEET_FOR: Record<Shift, string> = {
-  morning: 'Morning',
-  evening: 'Evening',
-  night: 'Night',
+// Map a ward-column header label from the traditional layout to a set of ward
+// names (or null for a spacer/unmapped column such as "Consultant").
+function headerLabelToWards(labelRaw: unknown): string[] | null {
+  const s = String(labelRaw ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!s || s === 'date' || s === 'day' || s.includes('consultant')) return null
+  if (/a\s*\+\s*c/.test(s) && !s.includes('ds')) return ['5A', '5C']
+  if (/5a\s*\+\s*b/.test(s)) return ['5A', '5B']
+  if (/5c\s*\+\s*d/.test(s)) return ['5C', '5D']
+  if (/9a\s*\+\s*b/.test(s)) return ['DS 9A', 'DS 9B']
+  if (/9\s*\+\s*cabin/.test(s)) return ['9', 'Cabin']
+  if (/10\s*\+\s*12/.test(s)) return ['10', '12']
+  if (/ds.*15a|ds15a/.test(s)) return ['DS 15A']
+  if (/ds.*15b|ds15b/.test(s)) return ['DS 15B']
+  if (/ds.*15c|ds15c/.test(s)) return ['DS 15C']
+  if (/ds\s*w?[-\s]*9a/.test(s)) return ['DS 9A']
+  if (/ds\s*w?[-\s]*9b/.test(s)) return ['DS 9B']
+  if (/ds\s*w?[-\s]*8/.test(s)) return ['DS 8']
+  if (/opd\s*a/.test(s)) return ['OPD A']
+  if (/opd\s*b/.test(s)) return ['OPD B']
+  if (/opd\s*c/.test(s)) return ['OPD C']
+  if (/htn/.test(s)) return ['HTN']
+  if (/cath/.test(s)) return ['Cath']
+  if (/observation|^obs/.test(s)) return ['Observation']
+  if (/cabin/.test(s)) return ['Cabin']
+  if (/7|ccu/.test(s)) return ['7']
+  if (/3a/.test(s)) return ['3A']
+  if (/3b/.test(s)) return ['3B']
+  if (/5a/.test(s)) return ['5A']
+  if (/5b/.test(s)) return ['5B']
+  if (/5c/.test(s)) return ['5C']
+  if (/5d/.test(s)) return ['5D']
+  if (/(^|[^0-9])9([^0-9]|$)/.test(s)) return ['9']
+  if (/10/.test(s)) return ['10']
+  if (/12/.test(s)) return ['12']
+  return null
 }
 
 /**
- * Read a partially- or fully-completed roster from a .xlsx file that follows
- * the app's own export layout (one sheet per shift; header row of
- * Day / Weekday / Holiday / station labels; cells hold comma-separated doctor
- * names). Station columns are matched to the given `effectiveStations` by their
- * display label per day, and names to doctors by an exact (case-insensitive)
- * match. Anything that can't be matched is reported rather than dropped
- * silently, so the caller can surface it.
+ * Read a partially- or fully-completed roster from a .xlsx file in the hospital's
+ * traditional three-block layout (Morning | Evening | Night side by side, each
+ * block starting with Date / Day columns; a date cell like "26.8.1"; ward columns
+ * that may span two sub-columns; cells hold doctor names). Ward columns are
+ * matched to the given `effectiveStations` per day by ward set, and names to
+ * active doctors by an exact (case-insensitive) match. Anything that can't be
+ * matched is reported rather than dropped silently.
  */
 export async function importRosterFromXlsx(
   file: File,
@@ -242,42 +352,72 @@ export async function importRosterFromXlsx(
   const missingStations = new Set<string>()
   let placed = 0
 
-  SHIFTS.forEach(shift => {
-    const wanted = IMPORT_SHEET_FOR[shift].toLowerCase()
-    const sheetName = wb.SheetNames.find(n => n.trim().toLowerCase() === wanted)
-    if (!sheetName) return
-    const ws = wb.Sheets[sheetName]
-    const aoa = XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, blankrows: false })
-    if (aoa.length < 2) return
+  const isDate = (c: unknown) => String(c ?? '').trim().toLowerCase() === 'date'
 
-    const header = (aoa[0] || []).map(h => String(h ?? '').trim())
-    // Columns 0–2 are Day / Weekday / Holiday; station columns start at index 3.
-    const stationCols = header
-      .map((label, idx) => ({ label, idx }))
-      .filter(c => c.idx >= 3 && c.label)
+  // Pick the sheet and header row that contain the three "Date" block markers.
+  let aoa: unknown[][] | null = null
+  let headerRowIdx = -1
+  for (const sn of wb.SheetNames) {
+    const a = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sn], { header: 1, blankrows: false, defval: null })
+    const idx = a.findIndex(row => (row || []).some(isDate))
+    if (idx >= 0) { aoa = a; headerRowIdx = idx; break }
+  }
+  if (!aoa) return { roster, placed, unmatched: [], missingStations: [] }
 
-    for (let r = 1; r < aoa.length; r++) {
+  const headerRow = aoa[headerRowIdx] || []
+  const dateCols: number[] = []
+  headerRow.forEach((c, i) => { if (isDate(c)) dateCols.push(i) })
+  const blocks = dateCols.map((start, i) => ({
+    shift: (['morning', 'evening', 'night'] as Shift[])[i],
+    start,
+    end: dateCols[i + 1] ?? headerRow.length,
+  }))
+
+  for (const b of blocks) {
+    if (!b.shift) continue
+    // Column -> ward set, forward-filled so a two-wide ward covers both sub-columns.
+    const colWards: Record<number, { wards: string[]; label: string }> = {}
+    let cur: { wards: string[]; label: string } | null = null
+    for (let c = b.start; c < b.end; c++) {
+      const t = String(headerRow[c] ?? '').trim()
+      if (t) {
+        const low = t.toLowerCase()
+        if (low === 'date' || low === 'day') { cur = null; continue }
+        const wards = headerLabelToWards(t)
+        cur = wards ? { wards, label: t } : null
+      }
+      if (cur) colWards[c] = cur
+    }
+
+    for (let r = headerRowIdx + 1; r < aoa.length; r++) {
       const row = aoa[r] || []
-      const day = parseInt(String(row[0] ?? ''), 10)
+      const dateStr = String(row[b.start] ?? '').trim()
+      if (!dateStr) continue
+      const seg = dateStr.split('.')
+      const day = parseInt(seg[seg.length - 1], 10)
       if (!day || day < 1 || day > days) continue
-      const dayStations = effectiveStations[day]?.[shift] || []
+      const dayStations = effectiveStations[day]?.[b.shift] || []
 
-      stationCols.forEach(col => {
-        const raw = String(row[col.idx] ?? '').trim()
-        if (!raw) return
-        const st = dayStations.find(s => stationDisplayLabel(s).trim().toLowerCase() === col.label.toLowerCase())
-        if (!st) { missingStations.add(`${col.label} (day ${day}, ${shift})`); return }
-        raw.split(/[,;]/).map(s => s.trim()).filter(s => s && s !== '—' && s !== '-').forEach(nm => {
+      for (const cStr of Object.keys(colWards)) {
+        const c = Number(cStr)
+        const { wards, label } = colWards[c]
+        const raw = String(row[c] ?? '').trim()
+        if (!raw) continue
+        const target = [...wards].sort().join('|')
+        const st = dayStations.find(s => [...s.wards].sort().join('|') === target)
+          || dayStations.find(s => s.wards.every(w => wards.includes(w)) || wards.every(w => s.wards.includes(w)))
+        if (!st) { missingStations.add(`${label} (day ${day}, ${b.shift})`); continue }
+        raw.split(/[,/;]/).map(x => x.trim()).filter(x => x && x !== '—' && x !== '-').forEach(nm => {
           const id = byName.get(nm.toLowerCase())
           if (!id) { unmatched.add(nm); return }
           roster[day] = roster[day] || {}
-          roster[day][shift] = roster[day][shift] || {}
-          const arr = roster[day][shift]![st.id] || (roster[day][shift]![st.id] = [])
+          roster[day][b.shift] = roster[day][b.shift] || {}
+          const arr = roster[day][b.shift]![st.id] || (roster[day][b.shift]![st.id] = [])
           if (!arr.includes(id)) { arr.push(id); placed++ }
         })
-      })
+      }
     }
-  })
+  }
 
   return { roster, placed, unmatched: [...unmatched], missingStations: [...missingStations] }
 }
