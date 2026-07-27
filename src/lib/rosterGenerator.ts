@@ -161,6 +161,13 @@ export function generateRoster(
     return station.wards.includes('9') && station.wards.includes('Cabin')
   }
 
+  // HARD: Observation is male-only — female doctors are never placed there (any
+  // shift). Doctors with no gender set are treated as unspecified and stay
+  // eligible until marked.
+  function isObservationStation(station: Station): boolean {
+    return station.wards.includes('Observation')
+  }
+
   function isFirstMan(d: Doctor): boolean {
     return d.categories.includes('First Man')
   }
@@ -287,6 +294,10 @@ export function generateRoster(
       if (day - lastDayWorked[d.id] < minGap) r.push('scheduled tighter than pacing')
     }
     if (shift === 'morning' && doubleDutyPair(d.id, day, weekday) === 'EN') r.push('morning despite evening+night request')
+    if (isObservationStation(station) && isEMO(d)) {
+      const here = roster[day]?.[shift]?.[station.id] || []
+      if (here.some(id => doctorById[id] && isEMO(doctorById[id]))) r.push('two EMOs together in Observation')
+    }
     if (r.length === 0) r.push('relaxed a soft placement rule')
     return r
   }
@@ -298,6 +309,7 @@ export function generateRoster(
     if (staticEligibleCountCache[key] !== undefined) return staticEligibleCountCache[key]
     const count = activeDoctors.filter(d => {
       if (station.wards.includes('Cath') && !d.cathEligible) return false
+      if (isObservationStation(station) && d.gender === 'female') return false
       if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
       if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
@@ -357,6 +369,27 @@ export function generateRoster(
       SHIFTS.forEach(sh => {
         const list = baseEffectiveStations[dayNum]?.[sh]
         if (list) effectiveStations[dayNum][sh] = list.map(s => ({ ...s, wards: [...s.wards] }))
+      })
+    })
+  }
+
+  // In preserve/complete mode the shifts of a day are filled in night→morning→
+  // evening order, so when filling one shift the generator can't yet "see" the
+  // preserved duties of the day's other shifts (or the neighbouring days). Index
+  // every preserved duty up front so eligibility can honour the hard rest and
+  // one-shift-per-day rules against them regardless of processing order.
+  const preservedDayShifts: Record<string, Record<number, Shift[]>> = {}
+  if (preserveExisting && baseRoster) {
+    activeDoctors.forEach(d => { preservedDayShifts[d.id] = {} })
+    Object.keys(baseRoster).forEach(dk => {
+      const day = Number(dk)
+      SHIFTS.forEach(sh => {
+        const cell = baseRoster[day]?.[sh]
+        if (!cell) return
+        Object.values(cell).forEach(ids => ids.forEach(id => {
+          if (!preservedDayShifts[id]) return
+          ;(preservedDayShifts[id][day] = preservedDayShifts[id][day] || []).push(sh)
+        }))
       })
     })
   }
@@ -473,6 +506,7 @@ export function generateRoster(
         if (!matchingStation) return skip(`"${dem.wardName}" not staffed this shift.`)
         if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
         if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
+        if (isObservationStation(matchingStation) && d.gender === 'female') return skip('Observation is male-only.')
         if (isSMO(d) && !matchingStation.wards.some(w => SMO_WARDS.includes(w))) return skip('SMO restricted to 3A / 7 / OPD / DS 15A.')
         if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
         if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
@@ -519,6 +553,25 @@ export function generateRoster(
               if (pair === 'ME' && !(lastLeg === 'morning' && shift === 'evening')) return false
               if (pair === 'EN' && !((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))) return false
             }
+            // Preserve/complete: honour the hard rest and one-shift-per-day rules
+            // against existing duties the shift-by-shift order hasn't surfaced yet
+            // (this day's other shifts, and the neighbouring days).
+            if (preserveExisting) {
+              const ps = preservedDayShifts[d.id]
+              if (ps) {
+                for (const psh of ps[day] || []) {
+                  if (psh === shift || already.includes(psh)) continue
+                  const pair = doubleDutyPair(d.id, day, weekday)
+                  const okDouble = (pair === 'ME' && ((psh === 'morning' && shift === 'evening') || (psh === 'evening' && shift === 'morning')))
+                    || (pair === 'EN' && ((psh === 'evening' && shift === 'night') || (psh === 'night' && shift === 'evening')))
+                  if (!okDouble) return false
+                }
+                // Rest after night, both directions: no night today if a duty is
+                // kept tomorrow; no duty today if a night is kept yesterday.
+                if (shift === 'night' && (ps[day + 1] || []).length > 0) return false
+                if ((ps[day - 1] || []).includes('night')) return false
+              }
+            }
             if (shift === 'morning') {
               const already2 = assignedTodayMap[d.id] || []
               if (already2.includes('night')) return false
@@ -527,6 +580,14 @@ export function generateRoster(
             if (station.wards.includes('Cath') && !d.cathEligible) return false
             // HARD: Ward 9 + Cabin NIGHT duty is male-only.
             if (shift === 'night' && is9CabinStation(station) && d.gender === 'female') return false
+            // HARD: Observation is male-only (all shifts).
+            if (isObservationStation(station) && d.gender === 'female') return false
+            // SOFT: avoid two EMOs together in Observation on the same shift —
+            // relaxed in the auto-fill pass if that's the only way to staff it.
+            if (!extra && isObservationStation(station) && isEMO(d)) {
+              const here = roster[day][shift]![station.id] || []
+              if (here.some(id => doctorById[id] && isEMO(doctorById[id]))) return false
+            }
             // HARD: SMO only at 3A / 7 / OPD A-C / DS 15A.
             if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
             if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
