@@ -20,6 +20,19 @@ export interface GenerationResult {
   opdCount: Record<string, number>
   fridayNightCount: Record<string, number>
   leaveOverrides: Array<{ day: number; shift: Shift; doctorId: string }>
+  /** Monthly duty cap actually used per doctor (base target minus duty-bank owed minus casual-leave reduction). */
+  effectiveTargets: Record<string, number>
+  /** Casual-leave days counted this month per doctor. */
+  casualLeaveDays: Record<string, number>
+}
+
+// Casual leave lowers a doctor's monthly duty cap (nights are NOT reduced):
+//   1–2 CL days → −1 duty, 3–4 days → −2 duties, 5+ days → −3 duties.
+export function casualLeaveDutyReduction(clDays: number): number {
+  if (clDays <= 0) return 0
+  if (clDays <= 2) return 1
+  if (clDays <= 4) return 2
+  return 3
 }
 
 export interface GenerateOptions {
@@ -147,6 +160,23 @@ export function generateRoster(
   })
   const doctorById: Record<string, Doctor> = {}
   activeDoctors.forEach(d => { doctorById[d.id] = d })
+
+  // Casual leave: count each doctor's leave days this month and lower their
+  // monthly duty cap accordingly (HARD — the cap is never exceeded; nights are
+  // left unchanged).
+  const casualLeaveDays: Record<string, number> = {}
+  activeDoctors.forEach(d => {
+    const leaves = (demandsByDoctor[d.id] || []).filter(dem => dem.kind === 'leave')
+    let n = 0
+    if (leaves.length) {
+      for (let day = 1; day <= days; day++) {
+        const isoDay = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        if (leaves.some(dem => isoDay >= (dem.startDate || '') && isoDay <= (dem.endDate || ''))) n++
+      }
+    }
+    casualLeaveDays[d.id] = n
+    effectiveTargets[d.id] = Math.max(0, effectiveTargets[d.id] - casualLeaveDutyReduction(n))
+  })
 
   const OPD_ABC_WARDS = ['OPD A', 'OPD B', 'OPD C']
   function isOpdStation(station: Station): boolean {
@@ -529,6 +559,8 @@ export function generateRoster(
         if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
         if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
         if (isOpdStation(matchingStation) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return skip('OPD limit reached.')
+        // HARD: never exceed the monthly duty cap, even for a fixed assignment.
+        if (assignedCount[d.id] >= effectiveTargets[d.id]) return skip('monthly duty cap reached.')
         if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return skip('Friday night cap reached.')
         usedThisShift.add(d.id)
         assignedCount[d.id]++
@@ -854,5 +886,7 @@ export function generateRoster(
     opdCount,
     fridayNightCount,
     leaveOverrides,
+    effectiveTargets,
+    casualLeaveDays,
   }
 }
