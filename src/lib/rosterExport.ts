@@ -1,4 +1,4 @@
-import type { Doctor, RosterEntry, EffectiveStations, Holiday, Shift, Station } from '@/types'
+import type { Doctor, RosterEntry, EffectiveStations, Holiday, Shift, Station, Shortfall } from '@/types'
 import { SHIFTS, SHIFT_LABEL, MONTHS } from '@/types'
 import { computeRosterStats } from '@/lib/rosterStats'
 import { stationDisplayLabel, isHolidayDay } from '@/lib/utils'
@@ -14,6 +14,12 @@ export interface RosterExportContext {
   hospitalName: string
   preparedByName: string
   warnings: string[]
+  /** Effective monthly duty cap per doctor (after duty-bank + casual-leave reduction). Falls back to base target when absent. */
+  effectiveTargets?: Record<string, number>
+  /** Casual-leave days counted this month per doctor. */
+  casualLeaveDays?: Record<string, number>
+  /** Unfilled slots from generation, used for the ward-gaps flag. */
+  shortfalls?: Shortfall[]
 }
 
 
@@ -260,6 +266,58 @@ export async function exportRosterExcel(ctx: RosterExportContext): Promise<void>
   const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows)
   summaryWs['!cols'] = [{ wch: 22 }, ...summaryHeader.slice(1).map(() => ({ wch: 12 }))]
   XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary')
+
+  // Flags sheet: doctors off their duty cap + wards that need more staffing.
+  {
+    const rows: (string | number)[][] = []
+    rows.push(['Duty cap flags & ward gaps'])
+    rows.push([`${MONTHS[ctx.month - 1]} ${ctx.year}`])
+    rows.push([])
+
+    // Section 1 — per-doctor duty balance against the effective cap.
+    rows.push(['Doctors — duty count vs cap'])
+    rows.push(['Doctor', 'CL days', 'Base cap', 'Effective cap', 'Assigned', 'Difference', 'Flag', 'Nights', 'Night target'])
+    let under = 0, over = 0
+    ctx.doctors
+      .filter(d => d.active)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach(d => {
+        const s = stats[d.id] || { assigned: 0, night: 0, cath: 0, opd: 0 }
+        const cl = ctx.casualLeaveDays?.[d.id] ?? 0
+        const eff = ctx.effectiveTargets?.[d.id] ?? d.target
+        const diff = s.assigned - eff
+        let flag = 'OK'
+        if (diff > 0) { flag = `OVER by ${diff}`; over++ }
+        else if (diff < 0) { flag = `UNDER by ${-diff}`; under++ }
+        rows.push([d.name, cl, d.target, eff, s.assigned, diff, flag, s.night, d.nightTarget])
+      })
+    rows.push([])
+    rows.push([`${under} doctor(s) under cap, ${over} over cap.`])
+    rows.push([])
+
+    // Section 2 — wards/shifts left short (extra duty needed).
+    rows.push(['Wards needing more duties (unfilled slots)'])
+    rows.push(['Ward / Station', 'Shift', 'Days short', 'Total missing', 'Sample days'])
+    const shortfalls = ctx.shortfalls || []
+    const byStation = new Map<string, { label: string; shift: Shift; days: Set<number>; missing: number }>()
+    shortfalls.forEach(sf => {
+      const key = `${sf.stationLabel}|${sf.shift}`
+      const e = byStation.get(key) || { label: sf.stationLabel || '—', shift: sf.shift, days: new Set<number>(), missing: 0 }
+      e.days.add(sf.day)
+      e.missing += sf.missing || 1
+      byStation.set(key, e)
+    })
+    const gaps = [...byStation.values()].sort((a, b) => b.missing - a.missing)
+    if (gaps.length === 0) rows.push(['— none —'])
+    gaps.forEach(g => {
+      const dayList = [...g.days].sort((a, b) => a - b)
+      rows.push([g.label, g.shift, dayList.length, g.missing, dayList.slice(0, 12).join(', ') + (dayList.length > 12 ? ' …' : '')])
+    })
+
+    const flagsWs = XLSX.utils.aoa_to_sheet(rows)
+    flagsWs['!cols'] = [{ wch: 24 }, { wch: 9 }, { wch: 10 }, { wch: 13 }, { wch: 10 }, { wch: 11 }, { wch: 13 }, { wch: 8 }, { wch: 12 }]
+    XLSX.utils.book_append_sheet(wb, flagsWs, 'Flags')
+  }
 
   // Warnings sheet (only when there is something to report).
   if (ctx.warnings.length > 0) {

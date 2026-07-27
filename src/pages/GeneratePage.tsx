@@ -55,6 +55,8 @@ export default function GeneratePage() {
 
   const printRef = useRef<HTMLDivElement>(null)
   const xlsxInputRef = useRef<HTMLInputElement>(null)
+  // Effective duty caps / casual-leave days from the last generation, for the export's Flags tab.
+  const [dutyMeta, setDutyMeta] = useState<{ effectiveTargets: Record<string, number>; casualLeaveDays: Record<string, number> }>({ effectiveTargets: {}, casualLeaveDays: {} })
 
   const activeDoctors = doctors.filter(d => d.active)
   const daysInMonth = new Date(meta.year, meta.month, 0).getDate()
@@ -70,6 +72,7 @@ export default function GeneratePage() {
     setImprovisations(result.improvisations)
     setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
     setFridayNightHistory({ ...fridayNightHistory, [monthKey(meta.year, meta.month)]: result.fridayNightCount })
+    setDutyMeta({ effectiveTargets: result.effectiveTargets, casualLeaveDays: result.casualLeaveDays })
     setRosterKey(monthKey(meta.year, meta.month))
   }
 
@@ -277,6 +280,9 @@ export default function GeneratePage() {
     hospitalName: settings.hospitalName,
     preparedByName: settings.preparedByName,
     warnings,
+    effectiveTargets: dutyMeta.effectiveTargets,
+    casualLeaveDays: dutyMeta.casualLeaveDays,
+    shortfalls,
   })
 
   const handleExportExcel = async () => {
