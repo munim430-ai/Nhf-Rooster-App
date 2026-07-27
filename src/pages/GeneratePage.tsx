@@ -4,14 +4,14 @@ import { useRosterSnapshots, useDutyBankHistory } from '@/hooks/useData'
 import { useAuth } from '@/hooks/useAuth'
 import { generateRoster } from '@/lib/rosterGenerator'
 import { computeRosterStats } from '@/lib/rosterStats'
-import { exportRosterExcel, exportRosterDocx, exportRosterCsv, type RosterExportContext } from '@/lib/rosterExport'
+import { exportRosterExcel, exportRosterDocx, exportRosterCsv, importRosterFromXlsx, type RosterExportContext } from '@/lib/rosterExport'
 import { monthKey, isHolidayDay, stationDisplayLabel } from '@/lib/utils'
 import { MONTHS, SHIFTS, SHIFT_LABEL } from '@/types'
 import type { Shift } from '@/types'
 import {
   Play, Save, FileDown, FileSpreadsheet, FileText, FileType, Printer,
   AlertTriangle, ChevronDown, ChevronUp, Pencil, X, Search, Wand2,
-  CalendarRange, FilePlus2, ListChecks,
+  CalendarRange, FilePlus2, ListChecks, FileUp,
 } from 'lucide-react'
 
 function sleep(ms: number) {
@@ -41,6 +41,8 @@ export default function GeneratePage() {
   const [isManual, setIsManual] = useState(false)
   const [isCompleting, setIsCompleting] = useState(false)
   const [isAutoFilling, setIsAutoFilling] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   // Day range to generate (within the selected month). Defaults to the whole month.
   const [rangeStart, setRangeStart] = useState(1)
@@ -52,6 +54,7 @@ export default function GeneratePage() {
   const [saveMsg, setSaveMsg] = useState('')
 
   const printRef = useRef<HTMLDivElement>(null)
+  const xlsxInputRef = useRef<HTMLInputElement>(null)
 
   const activeDoctors = doctors.filter(d => d.active)
   const daysInMonth = new Date(meta.year, meta.month, 0).getDate()
@@ -164,6 +167,47 @@ export default function GeneratePage() {
 
   // Auto-fill preserves existing placements and bends soft rules for the gaps.
   const handleAutoFill = () => handleComplete(true)
+
+  // Import a half-completed roster from a .xlsx file (the app's own export
+  // layout). We build a fresh scaffold for the selected month so column labels
+  // map to the right stations, read the file's placements onto it, then load it
+  // as the working roster — ready for "Complete Empty Slots" to finish.
+  const handleImportXlsx = async (file: File) => {
+    setIsImporting(true)
+    setImportMsg('')
+    setSaveMsg('')
+    await sleep(30)
+    try {
+      const scaffold = generateRoster(
+        doctors, stations, demands, holidays,
+        meta.year, meta.month, daysInMonth,
+        fridayNightHistory, dutyBank,
+        { scaffoldOnly: true }
+      )
+      const res = await importRosterFromXlsx(file, doctors, scaffold.effectiveStations, daysInMonth)
+      setRoster(res.roster)
+      setEffectiveStations(scaffold.effectiveStations)
+      setWarnings([])
+      setShortfalls([])
+      setImprovisations([])
+      setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
+      setRosterKey(monthKey(meta.year, meta.month))
+      const parts = [`Imported ${res.placed} duties for ${MONTHS[meta.month - 1]} ${meta.year}.`]
+      if (res.unmatched.length) {
+        parts.push(`${res.unmatched.length} unknown name(s) skipped: ${res.unmatched.slice(0, 6).join(', ')}${res.unmatched.length > 6 ? '…' : ''}.`)
+      }
+      if (res.missingStations.length) {
+        parts.push(`${res.missingStations.length} column(s) didn't match a station this month.`)
+      }
+      parts.push('Use "Complete Empty Slots" (or Auto-fill) to finish.')
+      setImportMsg(parts.join(' '))
+    } catch (err) {
+      setImportMsg(err instanceof Error ? `Import failed: ${err.message}` : 'Import failed.')
+    } finally {
+      setIsImporting(false)
+      if (xlsxInputRef.current) xlsxInputRef.current.value = ''
+    }
+  }
 
   const handleSave = async () => {
     if (!roster || !effectiveStations) return
@@ -443,7 +487,27 @@ export default function GeneratePage() {
               {isCompleting ? 'Completing...' : 'Complete Empty Slots'}
             </button>
           )}
+          <button
+            onClick={() => xlsxInputRef.current?.click()}
+            disabled={!canGenerate || isImporting}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-[#c9d8d1] text-[#5c6f6a] text-sm font-medium hover:bg-[#eef3f0] disabled:opacity-50"
+            title="Load a half-completed roster from an .xlsx file (the app's export layout), then complete it"
+          >
+            <FileUp className="w-4 h-4" />
+            {isImporting ? 'Importing...' : 'Import .xlsx'}
+          </button>
+          <input
+            ref={xlsxInputRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleImportXlsx(f) }}
+          />
         </div>
+
+        {importMsg && (
+          <p className="text-xs text-[#0f6e5c] bg-[#dcefe9] rounded-lg px-3 py-2 mb-4">{importMsg}</p>
+        )}
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-[#5c6f6a]">
           <div>{activeDoctors.length} active doctors</div>

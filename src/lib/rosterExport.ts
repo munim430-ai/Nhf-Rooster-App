@@ -196,6 +196,93 @@ export async function exportRosterExcel(ctx: RosterExportContext): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
+// Excel import (.xlsx) — read a half-completed roster back in
+// ---------------------------------------------------------------------------
+export interface RosterImportResult {
+  /** The parsed (partial) roster, keyed by the given effectiveStations' station ids. */
+  roster: RosterEntry
+  /** How many doctor placements were read in. */
+  placed: number
+  /** Doctor names found in the file that don't match any active doctor. */
+  unmatched: string[]
+  /** Column headers that didn't match a station that runs that shift/day. */
+  missingStations: string[]
+}
+
+const IMPORT_SHEET_FOR: Record<Shift, string> = {
+  morning: 'Morning',
+  evening: 'Evening',
+  night: 'Night',
+}
+
+/**
+ * Read a partially- or fully-completed roster from a .xlsx file that follows
+ * the app's own export layout (one sheet per shift; header row of
+ * Day / Weekday / Holiday / station labels; cells hold comma-separated doctor
+ * names). Station columns are matched to the given `effectiveStations` by their
+ * display label per day, and names to doctors by an exact (case-insensitive)
+ * match. Anything that can't be matched is reported rather than dropped
+ * silently, so the caller can surface it.
+ */
+export async function importRosterFromXlsx(
+  file: File,
+  doctors: Doctor[],
+  effectiveStations: EffectiveStations,
+  days: number,
+): Promise<RosterImportResult> {
+  const XLSX = await import('xlsx')
+  const buf = await file.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array' })
+
+  const byName = new Map<string, string>()
+  doctors.filter(d => d.active).forEach(d => byName.set(d.name.trim().toLowerCase(), d.id))
+
+  const roster: RosterEntry = {}
+  const unmatched = new Set<string>()
+  const missingStations = new Set<string>()
+  let placed = 0
+
+  SHIFTS.forEach(shift => {
+    const wanted = IMPORT_SHEET_FOR[shift].toLowerCase()
+    const sheetName = wb.SheetNames.find(n => n.trim().toLowerCase() === wanted)
+    if (!sheetName) return
+    const ws = wb.Sheets[sheetName]
+    const aoa = XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, blankrows: false })
+    if (aoa.length < 2) return
+
+    const header = (aoa[0] || []).map(h => String(h ?? '').trim())
+    // Columns 0–2 are Day / Weekday / Holiday; station columns start at index 3.
+    const stationCols = header
+      .map((label, idx) => ({ label, idx }))
+      .filter(c => c.idx >= 3 && c.label)
+
+    for (let r = 1; r < aoa.length; r++) {
+      const row = aoa[r] || []
+      const day = parseInt(String(row[0] ?? ''), 10)
+      if (!day || day < 1 || day > days) continue
+      const dayStations = effectiveStations[day]?.[shift] || []
+
+      stationCols.forEach(col => {
+        const raw = String(row[col.idx] ?? '').trim()
+        if (!raw) return
+        const st = dayStations.find(s => stationDisplayLabel(s).trim().toLowerCase() === col.label.toLowerCase())
+        if (!st) { missingStations.add(`${col.label} (day ${day}, ${shift})`); return }
+        raw.split(/[,;]/).map(s => s.trim()).filter(s => s && s !== '—' && s !== '-').forEach(nm => {
+          const id = byName.get(nm.toLowerCase())
+          if (!id) { unmatched.add(nm); return }
+          roster[day] = roster[day] || {}
+          roster[day][shift] = roster[day][shift] || {}
+          const arr = roster[day][shift]![st.id] || (roster[day][shift]![st.id] = [])
+          if (!arr.includes(id)) { arr.push(id); placed++ }
+        })
+      })
+    }
+  })
+
+  return { roster, placed, unmatched: [...unmatched], missingStations: [...missingStations] }
+}
+
+// ---------------------------------------------------------------------------
 // Word (.docx)
 // ---------------------------------------------------------------------------
 export async function exportRosterDocx(ctx: RosterExportContext): Promise<void> {
