@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { useDoctors } from '@/hooks/useData'
-import type { Doctor, Category } from '@/types'
+import type { Doctor, Category, Gender } from '@/types'
 import {
   Plus, Search, Edit3, Trash2, ChevronDown, ChevronUp,
   Stethoscope, Moon, HeartPulse, Eye, EyeOff
 } from 'lucide-react'
 
 const CATEGORY_OPTIONS: Category[] = ['SMO', 'EMO', 'MO', 'First Man']
+const GENDER_OPTIONS: Gender[] = ['male', 'female']
 
 const defaultOpdRange = (categories: Category[]) => {
   if (categories.includes('SMO')) return { opdMin: 4, opdMax: 6 }
@@ -29,12 +30,14 @@ export default function DoctorsPage() {
 
   const [search, setSearch] = useState('')
   const [filterCat, setFilterCat] = useState<Category | ''>('')
+  const [filterGender, setFilterGender] = useState<Gender | ''>('')
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
   // Form state
   const [formName, setFormName] = useState('')
   const [formCats, setFormCats] = useState<Category[]>(['MO'])
+  const [formGender, setFormGender] = useState<Gender | null>(null)
   const [formTarget, setFormTarget] = useState(23)
   const [formNightTarget, setFormNightTarget] = useState(6)
   const [formCath, setFormCath] = useState(false)
@@ -51,6 +54,7 @@ export default function DoctorsPage() {
   const visibleDoctors = doctors.filter(d => {
     if (d.secret && !secretUnlocked) return false
     if (filterCat && !d.categories.includes(filterCat)) return false
+    if (filterGender && d.gender !== filterGender) return false
     if (search && !d.name.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
@@ -58,6 +62,7 @@ export default function DoctorsPage() {
   const resetForm = () => {
     setFormName('')
     setFormCats(['MO'])
+    setFormGender(null)
     setFormTarget(23)
     setFormNightTarget(6)
     setFormCath(false)
@@ -80,6 +85,7 @@ export default function DoctorsPage() {
   const openEdit = (doc: Doctor) => {
     setFormName(doc.name)
     setFormCats([...doc.categories])
+    setFormGender(doc.gender ?? null)
     setFormTarget(doc.target)
     setFormNightTarget(doc.nightTarget)
     setFormCath(doc.cathEligible)
@@ -103,6 +109,7 @@ export default function DoctorsPage() {
     const base = {
       name: formName.trim(),
       categories: [...formCats],
+      gender: formGender,
       secret: formSecret,
       allowedWards: [...formWards],
       preferredWards: [...formPreferredWards],
@@ -190,6 +197,21 @@ export default function DoctorsPage() {
         </button>
       </div>
 
+      {/* Gender tabs */}
+      <div className="flex items-center gap-1 mb-4 bg-[#eef3f0] p-1 rounded-lg w-fit">
+        {([['', 'All'], ['male', 'Male'], ['female', 'Female']] as [Gender | '', string][]).map(([val, label]) => (
+          <button
+            key={val || 'all'}
+            onClick={() => setFilterGender(val)}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              filterGender === val ? 'bg-white text-[#0f6e5c] shadow-sm' : 'text-[#5c6f6a] hover:text-[#16221f]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Secret team toggle */}
       {isMaster && (
         <button
@@ -233,6 +255,11 @@ export default function DoctorsPage() {
                   {doc.cathEligible && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#e3e1f2] text-[#4a3b7a] font-medium">
                       Cath
+                    </span>
+                  )}
+                  {doc.gender && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#eef3f0] text-[#5c6f6a] font-medium capitalize">
+                      {doc.gender}
                     </span>
                   )}
                 </div>
@@ -344,6 +371,27 @@ export default function DoctorsPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Gender */}
+              <div>
+                <label className="block text-xs text-[#5c6f6a] mb-2">Gender</label>
+                <div className="flex gap-2">
+                  {GENDER_OPTIONS.map(g => (
+                    <button
+                      key={g}
+                      onClick={() => setFormGender(formGender === g ? null : g)}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-medium border capitalize transition-colors ${
+                        formGender === g
+                          ? 'bg-[#0f6e5c] text-white border-[#0f6e5c]'
+                          : 'bg-white text-[#5c6f6a] border-[#c9d8d1] hover:border-[#0f6e5c]'
+                      }`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-[#5c6f6a] mt-1.5">Ward 9 + Cabin night duty is male-only — female doctors are never placed there at night.</p>
               </div>
 
               {/* Targets */}

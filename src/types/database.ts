@@ -44,6 +44,7 @@ export interface Database {
           id: string
           name: string
           categories: string[]
+          gender: string | null
           secret: boolean
           allowed_wards: string[]
           preferred_wards: string[]
@@ -63,6 +64,7 @@ export interface Database {
           id?: string
           name: string
           categories?: string[]
+          gender?: string | null
           secret?: boolean
           allowed_wards?: string[]
           preferred_wards?: string[]
@@ -82,6 +84,7 @@ export interface Database {
           id?: string
           name?: string
           categories?: string[]
+          gender?: string | null
           secret?: boolean
           allowed_wards?: string[]
           preferred_wards?: string[]
