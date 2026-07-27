@@ -254,25 +254,29 @@ export function generateRoster(
     return list.some(dem => dem.kind === 'leave' && isoDay >= (dem.startDate || '') && isoDay <= (dem.endDate || ''))
   }
 
-  function doubleDutyPair(doctorId: string, day: number, weekday: number): 'ME' | 'EN' | null {
+  // Which double-duty pairings a doctor has requested for a day. A doctor may
+  // demand both morning+evening AND evening+night — then either double is
+  // honoured (M+E on some days, E+N on others), so both `me` and `en` are true.
+  function doublePairFlags(doctorId: string, day: number, weekday: number): { me: boolean; en: boolean } {
     const list = demandsByDoctor[doctorId]
-    if (!list) return null
-    const hasSingleOnly = list.some(dem => {
-      if (dem.kind !== 'single') return false
-      if (dem.scope === 'always') return true
-      if (dem.scope === 'weekly') return dem.dayOfWeek === weekday
-      if (dem.scope === 'date') return dem.date === day
-      return false
+    if (!list) return { me: false, en: false }
+    const scopeMatch = (dem: Demand) =>
+      dem.scope === 'always' ? true : dem.scope === 'weekly' ? dem.dayOfWeek === weekday : dem.scope === 'date' ? dem.date === day : false
+    // A single-duty demand overrides: no double duty at all that day.
+    if (list.some(dem => dem.kind === 'single' && scopeMatch(dem))) return { me: false, en: false }
+    let me = false, en = false
+    list.forEach(dem => {
+      if (dem.kind !== 'double' || !scopeMatch(dem)) return
+      if ((dem.pair || 'ME') === 'EN') en = true
+      else me = true
     })
-    if (hasSingleOnly) return null
-    const dem = list.find(dem => {
-      if (dem.kind !== 'double') return false
-      if (dem.scope === 'always') return true
-      if (dem.scope === 'weekly') return dem.dayOfWeek === weekday
-      if (dem.scope === 'date') return dem.date === day
-      return false
-    })
-    return dem ? (dem.pair || 'ME') : null
+    return { me, en }
+  }
+
+  // Representative single pair, for the ordering heuristic (truthy = has a double).
+  function doubleDutyPair(doctorId: string, day: number, weekday: number): 'ME' | 'EN' | null {
+    const { me, en } = doublePairFlags(doctorId, day, weekday)
+    return me ? 'ME' : en ? 'EN' : null
   }
 
   // Which soft rule(s) had to be relaxed to place this doctor here (for the
@@ -293,8 +297,9 @@ export function generateRoster(
       const minGap = Math.max(1, Math.floor(pace) - 1)
       if (day - lastDayWorked[d.id] < minGap) r.push('scheduled tighter than pacing')
     }
-    if (shift === 'morning' && doubleDutyPair(d.id, day, weekday) === 'EN') r.push('morning despite evening+night request')
-    if (shift === 'night' && doubleDutyPair(d.id, day, weekday) === 'ME') r.push('night despite morning+evening request')
+    const rDbl = doublePairFlags(d.id, day, weekday)
+    if (shift === 'morning' && rDbl.en && !rDbl.me) r.push('morning despite evening+night request')
+    if (shift === 'night' && rDbl.me && !rDbl.en) r.push('night despite morning+evening request')
     if (isObservationStation(station) && isEMO(d)) {
       const here = roster[day]?.[shift]?.[station.id] || []
       if (here.some(id => doctorById[id] && isEMO(doctorById[id]))) r.push('two EMOs together in Observation')
@@ -505,11 +510,12 @@ export function generateRoster(
         if (lastNightDay[d.id] === day - 1) return skip('mandatory rest after night shift.')
         const alreadyToday = assignedTodayMap[d.id] || []
         if (alreadyToday.length > 0) {
-          const pair = doubleDutyPair(d.id, day, weekday)
+          const dbl = doublePairFlags(d.id, day, weekday)
           const lastLeg = alreadyToday[alreadyToday.length - 1]
-          const patternOk = pair === 'ME' ? (alreadyToday.length === 1 && lastLeg === 'morning' && shift === 'evening')
-            : pair === 'EN' ? (alreadyToday.length === 1 && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening')))
-            : false
+          const patternOk = alreadyToday.length === 1 && (
+            (dbl.me && lastLeg === 'morning' && shift === 'evening')
+            || (dbl.en && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening')))
+          )
           if (!patternOk) return skip('no matching double-duty demand.')
         }
         if (isOff(d.id, day, weekday, shift)) return skip('doctor has off request.')
@@ -553,17 +559,18 @@ export function generateRoster(
           return activeDoctors.filter(d => {
             if (usedThisShift.has(d.id)) return false
             if (lastNightDay[d.id] === day - 1) return false
+            const dbl = doublePairFlags(d.id, day, weekday)
             const already = assignedTodayMap[d.id] || []
             if (already.length > 0) {
-              const pair = doubleDutyPair(d.id, day, weekday)
-              if (!pair) return false
+              if (!dbl.me && !dbl.en) return false
               if (already.length >= 2) return false
               const lastLeg = already[already.length - 1]
-              // A double-duty doctor works exactly the two paired shifts. Night
-              // is processed before evening, so accept the E+N pair in either
-              // order (evening→night or night→evening).
-              if (pair === 'ME' && !(lastLeg === 'morning' && shift === 'evening')) return false
-              if (pair === 'EN' && !((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))) return false
+              // A double-duty doctor works exactly the two paired shifts. Night is
+              // processed before evening, so accept E+N in either order. A doctor
+              // who demanded BOTH pairs may complete either double.
+              const meOk = dbl.me && lastLeg === 'morning' && shift === 'evening'
+              const enOk = dbl.en && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))
+              if (!meOk && !enOk) return false
             }
             // Preserve/complete: honour the hard rest and one-shift-per-day rules
             // against existing duties the shift-by-shift order hasn't surfaced yet
@@ -573,9 +580,8 @@ export function generateRoster(
               if (ps) {
                 for (const psh of ps[day] || []) {
                   if (psh === shift || already.includes(psh)) continue
-                  const pair = doubleDutyPair(d.id, day, weekday)
-                  const okDouble = (pair === 'ME' && ((psh === 'morning' && shift === 'evening') || (psh === 'evening' && shift === 'morning')))
-                    || (pair === 'EN' && ((psh === 'evening' && shift === 'night') || (psh === 'night' && shift === 'evening')))
+                  const okDouble = (dbl.me && ((psh === 'morning' && shift === 'evening') || (psh === 'evening' && shift === 'morning')))
+                    || (dbl.en && ((psh === 'evening' && shift === 'night') || (psh === 'night' && shift === 'evening')))
                   if (!okDouble) return false
                 }
                 // Rest after night, both directions: no night today if a duty is
@@ -587,20 +593,20 @@ export function generateRoster(
             if (shift === 'morning') {
               const already2 = assignedTodayMap[d.id] || []
               if (already2.includes('night')) return false
-              if (!extra && doubleDutyPair(d.id, day, weekday) === 'EN') return false
+              // Pure evening+night doctors don't do mornings; a both-pairs doctor may.
+              if (!extra && dbl.en && !dbl.me) return false
             }
-            // A morning+evening double-duty doctor works only day shifts — keep
-            // them off nights (symmetric to the evening+night → no-morning rule).
-            // Soft: relaxed in the auto-fill pass.
-            if (shift === 'night' && !extra && doubleDutyPair(d.id, day, weekday) === 'ME') return false
+            // Pure morning+evening doctors work only day shifts — keep them off
+            // nights (symmetric to the EN → no-morning rule); a both-pairs doctor
+            // may take a night as the E+N leg. Soft: relaxed in the auto-fill pass.
+            if (shift === 'night' && !extra && dbl.me && !dbl.en) return false
             // Reserve a doctor for their fixed-assignment shift today: the general
             // fill of any other shift skips them (unless the two shifts form a
             // valid double), so a night fill can't block an evening assignment.
             const fx = fixedShiftsToday[d.id]
             if (!extra && fx && !fx.has(shift)) {
-              const pair = doubleDutyPair(d.id, day, weekday)
-              const okPair = (pair === 'ME' && ((fx.has('evening') && shift === 'morning') || (fx.has('morning') && shift === 'evening')))
-                || (pair === 'EN' && ((fx.has('night') && shift === 'evening') || (fx.has('evening') && shift === 'night')))
+              const okPair = (dbl.me && ((fx.has('evening') && shift === 'morning') || (fx.has('morning') && shift === 'evening')))
+                || (dbl.en && ((fx.has('night') && shift === 'evening') || (fx.has('evening') && shift === 'night')))
               if (!okPair) return false
             }
             if (station.wards.includes('Cath') && !d.cathEligible) return false
