@@ -294,6 +294,7 @@ export function generateRoster(
       if (day - lastDayWorked[d.id] < minGap) r.push('scheduled tighter than pacing')
     }
     if (shift === 'morning' && doubleDutyPair(d.id, day, weekday) === 'EN') r.push('morning despite evening+night request')
+    if (shift === 'night' && doubleDutyPair(d.id, day, weekday) === 'ME') r.push('night despite morning+evening request')
     if (isObservationStation(station) && isEMO(d)) {
       const here = roster[day]?.[shift]?.[station.id] || []
       if (here.some(id => doctorById[id] && isEMO(doctorById[id]))) r.push('two EMOs together in Observation')
@@ -424,6 +425,17 @@ export function generateRoster(
     roster[day] = {}
     effectiveStations[day] = {}
     const assignedTodayMap: Record<string, Shift[]> = {}
+
+    // Which shifts a doctor is pinned to today by a fixed assignment. Night is
+    // filled first, so the general fill must not grab a doctor away from a
+    // later-shift fixed assignment (their assigned shift is reserved).
+    const fixedShiftsToday: Record<string, Set<Shift>> = {}
+    demands.forEach(dem => {
+      if (dem.kind !== 'assign' || !dem.shift) return
+      const matches = dem.scope === 'weekly' ? dem.dayOfWeek === weekday : dem.scope === 'date' ? dem.date === day : false
+      if (!matches) return
+      ;(fixedShiftsToday[dem.doctorId] = fixedShiftsToday[dem.doctorId] || new Set()).add(dem.shift)
+    })
 
     // HARD priority: fill night duties first, then the day shifts. OPD stations
     // are prioritised within each shift (below). This keeps the critical
@@ -576,6 +588,20 @@ export function generateRoster(
               const already2 = assignedTodayMap[d.id] || []
               if (already2.includes('night')) return false
               if (!extra && doubleDutyPair(d.id, day, weekday) === 'EN') return false
+            }
+            // A morning+evening double-duty doctor works only day shifts — keep
+            // them off nights (symmetric to the evening+night → no-morning rule).
+            // Soft: relaxed in the auto-fill pass.
+            if (shift === 'night' && !extra && doubleDutyPair(d.id, day, weekday) === 'ME') return false
+            // Reserve a doctor for their fixed-assignment shift today: the general
+            // fill of any other shift skips them (unless the two shifts form a
+            // valid double), so a night fill can't block an evening assignment.
+            const fx = fixedShiftsToday[d.id]
+            if (!extra && fx && !fx.has(shift)) {
+              const pair = doubleDutyPair(d.id, day, weekday)
+              const okPair = (pair === 'ME' && ((fx.has('evening') && shift === 'morning') || (fx.has('morning') && shift === 'evening')))
+                || (pair === 'EN' && ((fx.has('night') && shift === 'evening') || (fx.has('evening') && shift === 'night')))
+              if (!okPair) return false
             }
             if (station.wards.includes('Cath') && !d.cathEligible) return false
             // HARD: Ward 9 + Cabin NIGHT duty is male-only.
