@@ -153,10 +153,11 @@ export function generateRoster(
     return station.wards.some(w => OPD_ABC_WARDS.includes(w))
   }
 
-  // HARD: the combined Ward 9 + Cabin duty is male-only — female doctors are
-  // never placed there. (Doctors with no gender set are treated as unspecified
-  // and remain eligible until marked.)
-  function isMaleOnlyStation(station: Station): boolean {
+  // HARD: the combined Ward 9 + Cabin NIGHT duty is male-only — female doctors
+  // are never placed there at night. (Doctors with no gender set are treated as
+  // unspecified and remain eligible until marked.) The caller also checks the
+  // shift is night; this only identifies the 9+Cabin station.
+  function is9CabinStation(station: Station): boolean {
     return station.wards.includes('9') && station.wards.includes('Cabin')
   }
 
@@ -297,7 +298,6 @@ export function generateRoster(
     if (staticEligibleCountCache[key] !== undefined) return staticEligibleCountCache[key]
     const count = activeDoctors.filter(d => {
       if (station.wards.includes('Cath') && !d.cathEligible) return false
-      if (isMaleOnlyStation(station) && d.gender === 'female') return false
       if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
       if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
@@ -472,7 +472,7 @@ export function generateRoster(
         const matchingStation = dayStations.find(s => s.wards.includes(dem.wardName || ''))
         if (!matchingStation) return skip(`"${dem.wardName}" not staffed this shift.`)
         if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
-        if (isMaleOnlyStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin is male-only.')
+        if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
         if (isSMO(d) && !matchingStation.wards.some(w => SMO_WARDS.includes(w))) return skip('SMO restricted to 3A / 7 / OPD / DS 15A.')
         if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
         if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
@@ -525,8 +525,8 @@ export function generateRoster(
               if (!extra && doubleDutyPair(d.id, day, weekday) === 'EN') return false
             }
             if (station.wards.includes('Cath') && !d.cathEligible) return false
-            // HARD: Ward 9 + Cabin is male-only.
-            if (isMaleOnlyStation(station) && d.gender === 'female') return false
+            // HARD: Ward 9 + Cabin NIGHT duty is male-only.
+            if (shift === 'night' && is9CabinStation(station) && d.gender === 'female') return false
             // HARD: SMO only at 3A / 7 / OPD A-C / DS 15A.
             if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
             if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
