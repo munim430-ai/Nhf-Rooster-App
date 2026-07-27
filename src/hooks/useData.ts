@@ -21,6 +21,7 @@ export function useDoctors() {
         id: d.id,
         name: d.name,
         categories: d.categories as Doctor['categories'],
+        gender: (d.gender as Doctor['gender']) ?? null,
         secret: d.secret,
         allowedWards: d.allowed_wards,
         preferredWards: d.preferred_wards ?? [],
@@ -44,6 +45,7 @@ export function useDoctors() {
         .insert({
           name: doc.name,
           categories: doc.categories,
+          gender: doc.gender ?? null,
           secret: doc.secret,
           allowed_wards: doc.allowedWards,
           preferred_wards: doc.preferredWards ?? [],
@@ -72,6 +74,7 @@ export function useDoctors() {
         .update({
           name: doc.name,
           categories: doc.categories,
+          gender: doc.gender ?? null,
           secret: doc.secret,
           allowed_wards: doc.allowedWards,
           preferred_wards: doc.preferredWards ?? [],
@@ -477,6 +480,7 @@ export function useRestoreBackup() {
           id,
           name: d.name,
           categories: d.categories ?? [],
+          gender: d.gender ?? null,
           secret: !!d.secret,
           allowed_wards: d.allowedWards ?? [],
           preferred_wards: d.preferredWards ?? [],

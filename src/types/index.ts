@@ -1,4 +1,5 @@
 export type Category = 'SMO' | 'EMO' | 'MO' | 'First Man';
+export type Gender = 'male' | 'female';
 export type Shift = 'morning' | 'evening' | 'night';
 export type DemandKind = 'off' | 'double' | 'single' | 'leave' | 'assign';
 export type DemandScope = 'weekly' | 'date' | 'always';
@@ -8,6 +9,7 @@ export interface Doctor {
   id: string;
   name: string;
   categories: Category[];
+  gender: Gender | null;
   secret: boolean;
   allowedWards: string[];
   preferredWards: string[];
@@ -190,6 +192,8 @@ export const SHIFT_LABEL: Record<Shift, string> = {
 };
 
 export const CATEGORY_OPTIONS: Category[] = ['SMO','EMO','MO','First Man'];
+
+export const GENDER_OPTIONS: Gender[] = ['male','female'];
 
 export const FIRST_MAN_PRIORITY_WARDS = ['3A','7','OPD A','OPD B','OPD C','HTN','DS 15A'];
 
