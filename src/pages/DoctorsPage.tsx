@@ -391,7 +391,7 @@ export default function DoctorsPage() {
                     </button>
                   ))}
                 </div>
-                <p className="text-[11px] text-[#5c6f6a] mt-1.5">Ward 9 + Cabin night duty is male-only — female doctors are never placed there at night.</p>
+                <p className="text-[11px] text-[#5c6f6a] mt-1.5">Observation and the Ward 9 + Cabin night duty are male-only — female doctors are never placed there.</p>
               </div>
 
               {/* Targets */}
