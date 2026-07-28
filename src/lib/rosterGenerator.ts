@@ -338,9 +338,8 @@ export function generateRoster(
   // Shortfalls log). Evaluated against the doctor's state before assignment.
   function relaxReasons(d: Doctor, station: Station, shift: Shift, day: number, weekday: number): string[] {
     const r: string[] = []
-    // Note: monthly target, OPD cap and ward restrictions are HARD rules and are
-    // never relaxed, so they never appear here.
-    if (shift === 'night' && nightCount[d.id] >= d.nightTarget) r.push('over night target')
+    // Note: monthly target, night target, OPD cap and ward restrictions are HARD
+    // rules and are never relaxed, so they never appear here.
     if (station.wards.includes('Cath') && cathCount[d.id] >= d.cathQuota) r.push('over Cath quota')
     if (isOnLeave(d.id, day)) r.push('covering casual leave')
     if (shift === 'night' && weekday === 5 && exemptFromFriday.has(d.id)) r.push('repeat Friday night (rotation)')
@@ -455,12 +454,14 @@ export function generateRoster(
     })
   }
 
-  // Seed the counters from existing duties that fall OUTSIDE the generated range
-  // so monthly targets/quotas and (for the fixed prefix) night-rest/pacing see
-  // them. In-range existing duties are accounted during the loop instead.
+  // Seed the CUMULATIVE counters from EVERY existing duty up front — the whole
+  // month, in-range and out — so the hard caps (monthly duty, night, OPD, Cath)
+  // see a doctor's full preserved load before any new duty is added. (Without
+  // this, a duty added on an early day wouldn't yet "see" the doctor's later
+  // preserved nights and could push them over the cap.) The per-day replay below
+  // then only updates the day-ordered state, never the cumulative counters again.
   if (baseRoster) {
     for (let day = 1; day <= days; day++) {
-      if (day >= startDay && day <= endDay) continue
       const weekday = new Date(year, month - 1, day).getDay()
       SHIFT_ORDER.forEach(shift => {
         const cell = baseRoster[day]?.[shift]
@@ -470,10 +471,20 @@ export function generateRoster(
           const station = effList.find(s => s.id === stId) || { id: stId, label: stId, wards: [] as string[], needed: 0 }
           cell[stId].forEach(docId => {
             const d = doctorById[docId]
-            if (!d) return
-            accountCumulative(d, shift, station, weekday)
-            if (day < startDay) accountSequential(d, day, shift)
+            if (d) accountCumulative(d, shift, station, weekday)
           })
+        })
+      })
+    }
+    // Sequential (night-rest / pacing / streak) state for the fixed prefix — the
+    // days before the generated window, which are never re-processed.
+    for (let day = 1; day < startDay; day++) {
+      const weekday = new Date(year, month - 1, day).getDay()
+      SHIFT_ORDER.forEach(shift => {
+        const cell = baseRoster[day]?.[shift]
+        if (!cell) return
+        Object.keys(cell).forEach(stId => {
+          cell[stId].forEach(docId => { const d = doctorById[docId]; if (d) accountSequential(d, day, shift) })
         })
       })
     }
@@ -529,7 +540,8 @@ export function generateRoster(
             roster[day][shift]![st.id] = [...(roster[day][shift]![st.id] || []), d.id]
             usedThisShift.add(d.id)
             assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
-            accountCumulative(d, shift, st, weekday)
+            // Cumulative counters are already seeded up front; here only update the
+            // day-ordered state (rest/pacing/streak/recency).
             accountSequential(d, day, shift)
             markWard(d.id, day, st)
             if (isOnLeave(d.id, day)) leaveOverrides.push({ day, shift, doctorId: d.id })
@@ -589,6 +601,8 @@ export function generateRoster(
         if (isOpdStation(matchingStation) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return skip('OPD limit reached.')
         // HARD: never exceed the monthly duty cap, even for a fixed assignment.
         if (assignedCount[d.id] >= effectiveTargets[d.id]) return skip('monthly duty cap reached.')
+        // HARD: never exceed the night-duty cap.
+        if (shift === 'night' && nightCount[d.id] >= d.nightTarget) return skip('night duty cap reached.')
         if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return skip('Friday night cap reached.')
         usedThisShift.add(d.id)
         assignedCount[d.id]++
@@ -691,7 +705,8 @@ export function generateRoster(
             if (d.allowedWards.length > 0 && !station.wards.some(w => d.allowedWards.includes(w))) return false
             if (isOff(d.id, day, weekday, shift)) return false
             if (!extra && isOnLeave(d.id, day)) return false
-            if (shift === 'night' && !extra && nightCount[d.id] >= d.nightTarget) return false
+            // HARD: night-duty target is a cap — never exceeded, even by auto-fill.
+            if (shift === 'night' && nightCount[d.id] >= d.nightTarget) return false
             if (station.wards.includes('Cath') && !extra && cathCount[d.id] >= d.cathQuota) return false
             // HARD: OPD ward cap — never exceeded, even by auto-fill.
             if (isOpdStation(station) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return false
