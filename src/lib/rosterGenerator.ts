@@ -72,6 +72,13 @@ export interface GenerateOptions {
    * hand (manual entry).
    */
   scaffoldOnly?: boolean
+  /**
+   * Doctors whose schedule is user-entered and considered complete: the
+   * generator never adds a new duty to them (their existing duties are still
+   * kept via baseRoster, and never removed). Used so "Complete"/"Auto-fill"
+   * leaves hand-entered doctors untouched.
+   */
+  frozenDoctorIds?: string[]
 }
 
 export function generateRoster(
@@ -93,6 +100,8 @@ export function generateRoster(
   const baseEffectiveStations = options.baseEffectiveStations
   const startDay = Math.max(1, options.startDay ?? 1)
   const endDay = Math.min(days, options.endDay ?? days)
+  // User-entered doctors that must never receive a new duty (their input is complete).
+  const frozenDoctorIds = new Set(options.frozenDoctorIds || [])
   // Night is placed first, then the day shifts (see the main loop). The same
   // order is used when replaying existing duties so streak/rest state matches.
   const SHIFT_ORDER: Shift[] = ['night', 'morning', 'evening']
@@ -145,6 +154,22 @@ export function generateRoster(
   const lastDayWorked: Record<string, number> = {}
   const lastShiftWorked: Record<string, Shift | undefined> = {}
   const sameShiftStreak: Record<string, number> = {}
+  // Last day each doctor worked a given ward, used to spread a ward across
+  // doctors and stop anyone doing the same ward day after day.
+  const wardLastDay: Record<string, Record<string, number>> = {}
+  function markWard(id: string, day: number, station: Station) {
+    const m = wardLastDay[id] || (wardLastDay[id] = {})
+    station.wards.forEach(w => { m[w] = day })
+  }
+  // Days since a doctor last worked any of this station's wards (large = long
+  // ago / never). Bigger is preferred so recent repeats are pushed down.
+  function wardRecencyGap(id: string, station: Station, day: number): number {
+    const m = wardLastDay[id]
+    if (!m) return 999
+    let last = -999
+    station.wards.forEach(w => { if (m[w] !== undefined && m[w] > last) last = m[w] })
+    return last < 0 ? 999 : day - last
+  }
 
   const roster: RosterEntry = {}
   const effectiveStations: EffectiveStations = {}
@@ -506,6 +531,7 @@ export function generateRoster(
             assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
             accountCumulative(d, shift, st, weekday)
             accountSequential(d, day, shift)
+            markWard(d.id, day, st)
             if (isOnLeave(d.id, day)) leaveOverrides.push({ day, shift, doctorId: d.id })
           })
         })
@@ -524,6 +550,8 @@ export function generateRoster(
       fixedAssignDemands.forEach(dem => {
         const d = doctorById[dem.doctorId]
         if (!d) return
+        // Frozen (user-entered) doctors keep exactly their hand-entered duties.
+        if (frozenDoctorIds.has(d.id)) return
         // A fixed assignment is an explicit demand; if it can't be honoured,
         // record it as an unmet-demand shortfall (never improvised away).
         const skip = (why: string) => {
@@ -570,6 +598,7 @@ export function generateRoster(
         if (matchingStation.wards.includes('Cath')) cathCount[d.id]++
         if (isOpdStation(matchingStation)) opdCount[d.id]++
         if (shift === 'night' && weekday === 5) fridayNightCount[d.id]++
+        markWard(d.id, day, matchingStation)
         roster[day][shift]![matchingStation.id] = [...(roster[day][shift]![matchingStation.id] || []), d.id]
       })
 
@@ -589,6 +618,8 @@ export function generateRoster(
 
         function baseEligible(extra: boolean): Doctor[] {
           return activeDoctors.filter(d => {
+            // Frozen (user-entered) doctors never get a new duty added.
+            if (frozenDoctorIds.has(d.id)) return false
             if (usedThisShift.has(d.id)) return false
             if (lastNightDay[d.id] === day - 1) return false
             const dbl = doublePairFlags(d.id, day, weekday)
@@ -693,8 +724,19 @@ export function generateRoster(
               const bL = isOnLeave(b.id, day) ? 1 : 0
               if (aL !== bL) return aL - bL
             }
-            const aFM = isFirstMan(a) ? 1 : 0, bFM = isFirstMan(b) ? 1 : 0
-            if (bFM !== aFM) return bFM - aFM
+            // First Man priority applies only at their priority wards — elsewhere
+            // (e.g. Observation) they shouldn't be preferred, or they hog the ward.
+            if (station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) {
+              const aFM = isFirstMan(a) ? 1 : 0, bFM = isFirstMan(b) ? 1 : 0
+              if (bFM !== aFM) return bFM - aFM
+            }
+            // Spread a ward across doctors: strongly prefer whoever worked this
+            // ward longest ago (or never), so nobody is stuck on the same ward day
+            // after day (e.g. 8 Observation duties in a row). This ranks above the
+            // double-duty and preferred-ward biases so neither can hog a ward.
+            const aGap = wardRecencyGap(a.id, station, day)
+            const bGap = wardRecencyGap(b.id, station, day)
+            if (aGap !== bGap) return bGap - aGap
             const aPair = doubleDutyPair(a.id, day, weekday) ? 1 : 0
             const bPair = doubleDutyPair(b.id, day, weekday) ? 1 : 0
             if (bPair !== aPair) return bPair - aPair
@@ -770,6 +812,7 @@ export function generateRoster(
           assignedTodayMap[d.id] = [...(assignedTodayMap[d.id] || []), shift]
           accountCumulative(d, shift, station, weekday)
           accountSequential(d, day, shift)
+          markWard(d.id, day, station)
           if (isOnLeave(d.id, day)) leaveOverrides.push({ day, shift, doctorId: d.id })
           roster[day][shift]![station.id] = [...(roster[day][shift]![station.id] || []), d.id]
         }
