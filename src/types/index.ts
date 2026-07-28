@@ -1,4 +1,4 @@
-export type Category = 'SMO' | 'EMO' | 'MO' | 'First Man';
+export type Category = 'SMO' | 'EMO' | 'MO' | 'First Man' | 'Resident';
 export type Gender = 'male' | 'female';
 export type Shift = 'morning' | 'evening' | 'night';
 export type DemandKind = 'off' | 'double' | 'single' | 'leave' | 'assign';
@@ -191,7 +191,7 @@ export const SHIFT_LABEL: Record<Shift, string> = {
   night: 'Night (21:00–08:00)',
 };
 
-export const CATEGORY_OPTIONS: Category[] = ['SMO','EMO','MO','First Man'];
+export const CATEGORY_OPTIONS: Category[] = ['SMO','EMO','MO','First Man','Resident'];
 
 export const GENDER_OPTIONS: Gender[] = ['male','female'];
 

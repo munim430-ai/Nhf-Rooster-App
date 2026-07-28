@@ -8,7 +8,7 @@ import {
   Stethoscope, Moon, HeartPulse, Eye, EyeOff
 } from 'lucide-react'
 
-const CATEGORY_OPTIONS: Category[] = ['SMO', 'EMO', 'MO', 'First Man']
+const CATEGORY_OPTIONS: Category[] = ['SMO', 'EMO', 'MO', 'First Man', 'Resident']
 const GENDER_OPTIONS: Gender[] = ['male', 'female']
 
 const defaultOpdRange = (categories: Category[]) => {
@@ -149,6 +149,7 @@ export default function DoctorsPage() {
       EMO: 'bg-[#dde9f2] text-[#264a72]',
       MO: 'bg-[#dcefe9] text-[#0f6e5c]',
       'First Man': 'bg-[#f4d9df] text-[#7a2c42]',
+      Resident: 'bg-[#e3e1f2] text-[#4a3b7a]',
     }
     return (
       <span key={cat} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${colors[cat]}`}>
