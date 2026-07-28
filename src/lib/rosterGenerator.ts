@@ -257,6 +257,9 @@ export function generateRoster(
   function isEMO(d: Doctor): boolean {
     return d.categories.includes('EMO')
   }
+  function isResident(d: Doctor): boolean {
+    return d.categories.includes('Resident')
+  }
   // A plain MO — not SMO/EMO/First Man.
   function isPureMO(d: Doctor): boolean {
     return d.categories.includes('MO') && !isSMO(d) && !isEMO(d) && !isFirstMan(d)
@@ -636,6 +639,7 @@ export function generateRoster(
         if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
         if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
         if (isObservationStation(matchingStation) && d.gender === 'female') return skip('Observation is male-only.')
+        if (shift === 'morning' && isResident(d)) return skip('Residents do not do morning duty.')
         if (isSMO(d) && !matchingStation.wards.some(w => SMO_WARDS.includes(w))) return skip('SMO restricted to 3A / 7 / OPD / DS 15A.')
         if (isFirstMan(d) && !isEMO(d) && !matchingStation.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return skip('First Man restricted to priority wards.')
         if (d.allowedWards.length > 0 && !matchingStation.wards.some(w => d.allowedWards.includes(w))) return skip(`ward-restricted, "${dem.wardName}" not allowed.`)
@@ -678,6 +682,8 @@ export function generateRoster(
           return activeDoctors.filter(d => {
             // Frozen (user-entered) doctors never get a new duty added.
             if (frozenDoctorIds.has(d.id)) return false
+            // HARD: Residents never do morning duty.
+            if (shift === 'morning' && isResident(d)) return false
             // MO-only policy: auto-assign plain MOs (Cath allows any Cath-eligible).
             if (!autoAssignable(d, station)) return false
             if (usedThisShift.has(d.id)) return false

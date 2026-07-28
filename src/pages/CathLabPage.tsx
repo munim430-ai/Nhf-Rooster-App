@@ -11,6 +11,7 @@ const categoryBadge = (cat: Category) => {
     EMO: 'bg-[#dde9f2] text-[#264a72]',
     MO: 'bg-[#dcefe9] text-[#0f6e5c]',
     'First Man': 'bg-[#f4d9df] text-[#7a2c42]',
+    Resident: 'bg-[#e3e1f2] text-[#4a3b7a]',
   }
   return (
     <span key={cat} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${colors[cat]}`}>
