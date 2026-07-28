@@ -57,6 +57,11 @@ export default function GeneratePage() {
   const xlsxInputRef = useRef<HTMLInputElement>(null)
   // Effective duty caps / casual-leave days from the last generation, for the export's Flags tab.
   const [dutyMeta, setDutyMeta] = useState<{ effectiveTargets: Record<string, number>; casualLeaveDays: Record<string, number> }>({ effectiveTargets: {}, casualLeaveDays: {} })
+  // How the current roster came to be, and which doctors are user-entered. When
+  // completing a manual/imported roster (or any hand-edited doctor), those
+  // doctors are frozen — the generator won't add or remove their duties.
+  const [rosterSource, setRosterSource] = useState<'generated' | 'manual' | 'imported' | null>(null)
+  const [lockedDoctorIds, setLockedDoctorIds] = useState<string[]>([])
 
   const activeDoctors = doctors.filter(d => d.active)
   const daysInMonth = new Date(meta.year, meta.month, 0).getDate()
@@ -119,6 +124,8 @@ export default function GeneratePage() {
       }
     )
     applyResult(result)
+    setRosterSource('generated')
+    setLockedDoctorIds([])
     setIsGenerating(false)
   }
 
@@ -136,6 +143,8 @@ export default function GeneratePage() {
       { scaffoldOnly: true, startDay: clampedStart, endDay: clampedEnd }
     )
     applyResult(result)
+    setRosterSource('manual')
+    setLockedDoctorIds([])
     setEditMode(true)
     setIsManual(false)
   }
@@ -150,6 +159,14 @@ export default function GeneratePage() {
     else setIsCompleting(true)
     setSaveMsg('')
     await sleep(30)
+    // Freeze user-entered doctors: every doctor in a manual/imported roster, plus
+    // any doctor whose cells were hand-edited. Their duties are kept and never added to.
+    const frozen = new Set(lockedDoctorIds)
+    if (rosterSource === 'manual' || rosterSource === 'imported') {
+      for (const dk of Object.keys(roster)) {
+        SHIFTS.forEach(sh => Object.values(roster[+dk]?.[sh] || {}).forEach(ids => ids.forEach(id => frozen.add(id))))
+      }
+    }
     const result = generateRoster(
       doctors, stations, demands, holidays,
       meta.year, meta.month, daysInMonth,
@@ -161,6 +178,7 @@ export default function GeneratePage() {
         baseRoster: roster,
         baseEffectiveStations: effectiveStations,
         preserveExisting: true,
+        frozenDoctorIds: [...frozen],
       }
     )
     applyResult(result)
@@ -195,6 +213,11 @@ export default function GeneratePage() {
       setImprovisations([])
       setMeta({ ...meta, days: daysInMonth, generatedAt: new Date().toISOString() })
       setRosterKey(monthKey(meta.year, meta.month))
+      // Imported duties are user input — freeze those doctors when completing.
+      setRosterSource('imported')
+      const importedDocs = new Set<string>()
+      for (const dk of Object.keys(res.roster)) SHIFTS.forEach(sh => Object.values(res.roster[+dk]?.[sh] || {}).forEach(ids => ids.forEach(id => importedDocs.add(id))))
+      setLockedDoctorIds([...importedDocs])
       const parts = [`Imported ${res.placed} duties for ${MONTHS[meta.month - 1]} ${meta.year}.`]
       if (res.unmatched.length) {
         parts.push(`${res.unmatched.length} unknown name(s) skipped: ${res.unmatched.slice(0, 6).join(', ')}${res.unmatched.length > 6 ? '…' : ''}.`)
@@ -392,6 +415,8 @@ export default function GeneratePage() {
     for (const stId of Object.keys(sr)) cleaned[stId] = (sr[stId] || []).filter(id => id !== docId)
     if (newStationId) cleaned[newStationId] = [...(cleaned[newStationId] || []), docId]
     setRoster({ ...roster, [day]: { ...roster[day], [shift]: cleaned } })
+    // A hand-edited doctor is user input — freeze them from auto-fill/complete.
+    setLockedDoctorIds(prev => prev.includes(docId) ? prev : [...prev, docId])
   }
 
   return (
