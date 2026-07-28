@@ -79,6 +79,25 @@ export interface GenerateOptions {
    * leaves hand-entered doctors untouched.
    */
   frozenDoctorIds?: string[]
+  /**
+   * Wards reserved for manual entry: a station whose wards are ALL in this set
+   * is never auto-filled (existing/user duties there are still kept). Used to
+   * leave e.g. Observation / 3A / OPD / HTN empty for hand-entered EMO/SMO/
+   * First-Man duties.
+   */
+  reservedWards?: string[]
+  /**
+   * When true, the generator only auto-assigns plain MO doctors (no SMO / EMO /
+   * First Man), except a Cath station may take any Cath-eligible doctor.
+   * Existing/user duties are unaffected.
+   */
+  autoAssignMoOnly?: boolean
+  /**
+   * Order in which the three shifts are filled each day (default night →
+   * morning → evening). E.g. ['night','evening','morning'] fills night
+   * requirements first, then evening, then morning.
+   */
+  shiftFillOrder?: Shift[]
 }
 
 export function generateRoster(
@@ -102,9 +121,15 @@ export function generateRoster(
   const endDay = Math.min(days, options.endDay ?? days)
   // User-entered doctors that must never receive a new duty (their input is complete).
   const frozenDoctorIds = new Set(options.frozenDoctorIds || [])
+  const reservedWards = new Set(options.reservedWards || [])
+  const autoAssignMoOnly = options.autoAssignMoOnly ?? false
   // Night is placed first, then the day shifts (see the main loop). The same
   // order is used when replaying existing duties so streak/rest state matches.
   const SHIFT_ORDER: Shift[] = ['night', 'morning', 'evening']
+  // Order the shifts are FILLED each day (may differ from the accounting order).
+  const shiftFillOrder: Shift[] = options.shiftFillOrder && options.shiftFillOrder.length === 3
+    ? options.shiftFillOrder
+    : SHIFT_ORDER
   const activeDoctors = doctors.filter(d => d.active)
   const assignedCount: Record<string, number> = {}
   const nightCount: Record<string, number> = {}
@@ -231,6 +256,20 @@ export function generateRoster(
   }
   function isEMO(d: Doctor): boolean {
     return d.categories.includes('EMO')
+  }
+  // A plain MO — not SMO/EMO/First Man.
+  function isPureMO(d: Doctor): boolean {
+    return d.categories.includes('MO') && !isSMO(d) && !isEMO(d) && !isFirstMan(d)
+  }
+  // A station reserved for manual entry — all its wards are in reservedWards.
+  function isReservedStation(station: Station): boolean {
+    return reservedWards.size > 0 && station.wards.length > 0 && station.wards.every(w => reservedWards.has(w))
+  }
+  // May this doctor be AUTO-assigned to this station under the MO-only policy?
+  function autoAssignable(d: Doctor, station: Station): boolean {
+    if (!autoAssignMoOnly) return true
+    if (station.wards.includes('Cath') && d.cathEligible) return true
+    return isPureMO(d)
   }
 
   // Accounting helpers, shared between fresh placement (assignOne), the replay
@@ -508,10 +547,9 @@ export function generateRoster(
       ;(fixedShiftsToday[dem.doctorId] = fixedShiftsToday[dem.doctorId] || new Set()).add(dem.shift)
     })
 
-    // HARD priority: fill night duties first, then the day shifts. OPD stations
-    // are prioritised within each shift (below). This keeps the critical
-    // night/OPD requirements from being starved by ordinary day duties.
-    SHIFT_ORDER.forEach(shift => {
+    // HARD priority: fill shifts in the configured order (night first by
+    // default). OPD stations are prioritised within each shift (below).
+    shiftFillOrder.forEach(shift => {
       roster[day][shift] = {}
       const usedThisShift = new Set<string>()
       let dayStations = holidayAdjustedStations(shift, holidayToday).filter(s => s.needed > 0)
@@ -583,7 +621,7 @@ export function generateRoster(
           const dbl = doublePairFlags(d.id, day, weekday)
           const lastLeg = alreadyToday[alreadyToday.length - 1]
           const patternOk = alreadyToday.length === 1 && (
-            (dbl.me && lastLeg === 'morning' && shift === 'evening')
+            (dbl.me && ((lastLeg === 'morning' && shift === 'evening') || (lastLeg === 'evening' && shift === 'morning')))
             || (dbl.en && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening')))
           )
           if (!patternOk) return skip('no matching double-duty demand.')
@@ -592,6 +630,9 @@ export function generateRoster(
         if (isOnLeave(d.id, day)) return skip('doctor on casual leave.')
         const matchingStation = dayStations.find(s => s.wards.includes(dem.wardName || ''))
         if (!matchingStation) return skip(`"${dem.wardName}" not staffed this shift.`)
+        // Reserved wards / MO-only policy also apply to fixed assignments.
+        if (isReservedStation(matchingStation)) return
+        if (!autoAssignable(d, matchingStation)) return
         if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
         if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
         if (isObservationStation(matchingStation) && d.gender === 'female') return skip('Observation is male-only.')
@@ -626,6 +667,9 @@ export function generateRoster(
       const shuffledStations = [...obsStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
 
       shuffledStations.forEach(station => {
+        // Reserved wards are left for manual entry — never auto-filled (any
+        // existing/user duties there were already kept above).
+        if (isReservedStation(station)) return
         const alreadyAssigned = roster[day][shift]![station.id] || []
         const remainingNeeded = Math.max(0, station.needed - alreadyAssigned.length)
         if (remainingNeeded === 0) return
@@ -634,6 +678,8 @@ export function generateRoster(
           return activeDoctors.filter(d => {
             // Frozen (user-entered) doctors never get a new duty added.
             if (frozenDoctorIds.has(d.id)) return false
+            // MO-only policy: auto-assign plain MOs (Cath allows any Cath-eligible).
+            if (!autoAssignable(d, station)) return false
             if (usedThisShift.has(d.id)) return false
             if (lastNightDay[d.id] === day - 1) return false
             const dbl = doublePairFlags(d.id, day, weekday)
@@ -642,10 +688,9 @@ export function generateRoster(
               if (!dbl.me && !dbl.en) return false
               if (already.length >= 2) return false
               const lastLeg = already[already.length - 1]
-              // A double-duty doctor works exactly the two paired shifts. Night is
-              // processed before evening, so accept E+N in either order. A doctor
-              // who demanded BOTH pairs may complete either double.
-              const meOk = dbl.me && lastLeg === 'morning' && shift === 'evening'
+              // A double-duty doctor works exactly the two paired shifts, in
+              // whichever order they're processed (the fill order is configurable).
+              const meOk = dbl.me && ((lastLeg === 'morning' && shift === 'evening') || (lastLeg === 'evening' && shift === 'morning'))
               const enOk = dbl.en && ((lastLeg === 'evening' && shift === 'night') || (lastLeg === 'night' && shift === 'evening'))
               if (!meOk && !enOk) return false
             }
