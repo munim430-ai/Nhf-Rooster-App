@@ -679,10 +679,14 @@ export function generateRoster(
       // then the rest (shuffled). Combined with night-first shift order, this
       // fills the night and OPD requirements ahead of ordinary day duties.
       const obsStations = dayStations.filter(s => s.wards.includes('Observation'))
-      const opdStations = dayStations.filter(s => !s.wards.includes('Observation') && isOpdStation(s))
-      const w7Stations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && s.wards.includes('7'))
-      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && !s.wards.includes('7'))
-      const shuffledStations = [...obsStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
+      // Cath Lab has the smallest eligible pool (only Cath-allowed doctors), so it
+      // is filled early — before the general wards can claim those few doctors —
+      // which is what lets the "shared equally" rule actually reach every evening.
+      const cathStations = dayStations.filter(s => !s.wards.includes('Observation') && s.wards.includes('Cath'))
+      const opdStations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && isOpdStation(s))
+      const w7Stations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && !isOpdStation(s) && s.wards.includes('7'))
+      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && !isOpdStation(s) && !s.wards.includes('7'))
+      const shuffledStations = [...obsStations, ...cathStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
 
       shuffledStations.forEach(station => {
         // Reserved wards are left for manual entry — never auto-filled (any
