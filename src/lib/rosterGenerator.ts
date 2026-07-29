@@ -397,7 +397,6 @@ export function generateRoster(
     const r: string[] = []
     // Note: monthly target, night target, OPD cap and ward restrictions are HARD
     // rules and are never relaxed, so they never appear here.
-    if (station.wards.includes('Cath') && cathCount[d.id] >= d.cathQuota) r.push('over Cath quota')
     if (isOnLeave(d.id, day)) r.push('covering casual leave')
     if (shift === 'night' && weekday === 5 && exemptFromFriday.has(d.id)) r.push('repeat Friday night (rotation)')
     if (lastShiftWorked[d.id] === shift && (sameShiftStreak[d.id] || 0) >= 3) r.push('4th+ same shift in a row')
@@ -773,7 +772,9 @@ export function generateRoster(
             if (!extra && isOnLeave(d.id, day)) return false
             // HARD: night-duty target is a cap — never exceeded, even by auto-fill.
             if (shift === 'night' && nightCount[d.id] >= d.nightTarget) return false
-            if (station.wards.includes('Cath') && !extra && cathCount[d.id] >= d.cathQuota) return false
+            // NOTE: the per-doctor Cath quota is intentionally NOT a cap — the
+            // "Cath duties shared equally" hard rule governs instead, so a low or
+            // zero quota can't exclude a qualifying doctor from their fair share.
             // HARD: OPD ward cap — never exceeded, even by auto-fill.
             if (isOpdStation(station) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return false
             if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return false
