@@ -12,6 +12,8 @@ const categoryBadge = (cat: Category) => {
     MO: 'bg-[#dcefe9] text-[#0f6e5c]',
     'First Man': 'bg-[#f4d9df] text-[#7a2c42]',
     Resident: 'bg-[#e3e1f2] text-[#4a3b7a]',
+    'Second Man': 'bg-[#e6efd9] text-[#3f5a1c]',
+    'Observation Second Man': 'bg-[#f2e6d0] text-[#7a5a1c]',
   }
   return (
     <span key={cat} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${colors[cat]}`}>

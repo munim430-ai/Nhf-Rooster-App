@@ -8,6 +8,9 @@ import {
 } from '@/types'
 import { isHolidayDay, monthKey } from '@/lib/utils'
 
+// Wards that need two doctors every day, where a Second Man partners the senior.
+const SECOND_MAN_WARDS = ['3A', '7', 'DS 15A']
+
 export interface GenerationResult {
   roster: RosterEntry
   effectiveStations: EffectiveStations
@@ -260,9 +263,21 @@ export function generateRoster(
   function isResident(d: Doctor): boolean {
     return d.categories.includes('Resident')
   }
+  function isSecondMan(d: Doctor): boolean {
+    return d.categories.includes('Second Man')
+  }
+  function isObsSecondMan(d: Doctor): boolean {
+    return d.categories.includes('Observation Second Man')
+  }
   // A plain MO — not SMO/EMO/First Man.
   function isPureMO(d: Doctor): boolean {
     return d.categories.includes('MO') && !isSMO(d) && !isEMO(d) && !isFirstMan(d)
+  }
+  // HARD: only doctors who are BOTH marked Cath-eligible AND have Cath ticked in
+  // their ward restrictions may take a Cath Lab duty. Cath duties are then shared
+  // equally among exactly this pool.
+  function cathAllowed(d: Doctor): boolean {
+    return d.cathEligible && d.allowedWards.includes('Cath')
   }
   // A station reserved for manual entry — all its wards are in reservedWards.
   function isReservedStation(station: Station): boolean {
@@ -270,8 +285,8 @@ export function generateRoster(
   }
   // May this doctor be AUTO-assigned to this station under the MO-only policy?
   function autoAssignable(d: Doctor, station: Station): boolean {
+    if (station.wards.includes('Cath')) return cathAllowed(d)
     if (!autoAssignMoOnly) return true
-    if (station.wards.includes('Cath') && d.cathEligible) return true
     return isPureMO(d)
   }
 
@@ -382,7 +397,6 @@ export function generateRoster(
     const r: string[] = []
     // Note: monthly target, night target, OPD cap and ward restrictions are HARD
     // rules and are never relaxed, so they never appear here.
-    if (station.wards.includes('Cath') && cathCount[d.id] >= d.cathQuota) r.push('over Cath quota')
     if (isOnLeave(d.id, day)) r.push('covering casual leave')
     if (shift === 'night' && weekday === 5 && exemptFromFriday.has(d.id)) r.push('repeat Friday night (rotation)')
     if (lastShiftWorked[d.id] === shift && (sameShiftStreak[d.id] || 0) >= 3) r.push('4th+ same shift in a row')
@@ -410,7 +424,7 @@ export function generateRoster(
     const key = [...station.wards].sort().join('|')
     if (staticEligibleCountCache[key] !== undefined) return staticEligibleCountCache[key]
     const count = activeDoctors.filter(d => {
-      if (station.wards.includes('Cath') && !d.cathEligible) return false
+      if (station.wards.includes('Cath') && !cathAllowed(d)) return false
       if (isObservationStation(station) && d.gender === 'female') return false
       if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
@@ -636,7 +650,7 @@ export function generateRoster(
         // Reserved wards / MO-only policy also apply to fixed assignments.
         if (isReservedStation(matchingStation)) return
         if (!autoAssignable(d, matchingStation)) return
-        if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
+        if (matchingStation.wards.includes('Cath') && !cathAllowed(d)) return skip('Cath needs Cath-eligible + Cath in ward restrictions.')
         if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
         if (isObservationStation(matchingStation) && d.gender === 'female') return skip('Observation is male-only.')
         if (shift === 'morning' && isResident(d)) return skip('Residents do not do morning duty.')
@@ -665,10 +679,14 @@ export function generateRoster(
       // then the rest (shuffled). Combined with night-first shift order, this
       // fills the night and OPD requirements ahead of ordinary day duties.
       const obsStations = dayStations.filter(s => s.wards.includes('Observation'))
-      const opdStations = dayStations.filter(s => !s.wards.includes('Observation') && isOpdStation(s))
-      const w7Stations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && s.wards.includes('7'))
-      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !isOpdStation(s) && !s.wards.includes('7'))
-      const shuffledStations = [...obsStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
+      // Cath Lab has the smallest eligible pool (only Cath-allowed doctors), so it
+      // is filled early — before the general wards can claim those few doctors —
+      // which is what lets the "shared equally" rule actually reach every evening.
+      const cathStations = dayStations.filter(s => !s.wards.includes('Observation') && s.wards.includes('Cath'))
+      const opdStations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && isOpdStation(s))
+      const w7Stations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && !isOpdStation(s) && s.wards.includes('7'))
+      const restStations = dayStations.filter(s => !s.wards.includes('Observation') && !s.wards.includes('Cath') && !isOpdStation(s) && !s.wards.includes('7'))
+      const shuffledStations = [...obsStations, ...cathStations, ...opdStations, ...w7Stations, ...restStations.sort(() => Math.random() - 0.5)]
 
       shuffledStations.forEach(station => {
         // Reserved wards are left for manual entry — never auto-filled (any
@@ -737,7 +755,7 @@ export function generateRoster(
                 || (dbl.en && ((fx.has('night') && shift === 'evening') || (fx.has('evening') && shift === 'night')))
               if (!okPair) return false
             }
-            if (station.wards.includes('Cath') && !d.cathEligible) return false
+            if (station.wards.includes('Cath') && !cathAllowed(d)) return false
             // HARD: Ward 9 + Cabin NIGHT duty is male-only.
             if (shift === 'night' && is9CabinStation(station) && d.gender === 'female') return false
             // HARD: Observation is male-only (all shifts).
@@ -758,7 +776,9 @@ export function generateRoster(
             if (!extra && isOnLeave(d.id, day)) return false
             // HARD: night-duty target is a cap — never exceeded, even by auto-fill.
             if (shift === 'night' && nightCount[d.id] >= d.nightTarget) return false
-            if (station.wards.includes('Cath') && !extra && cathCount[d.id] >= d.cathQuota) return false
+            // NOTE: the per-doctor Cath quota is intentionally NOT a cap — the
+            // "Cath duties shared equally" hard rule governs instead, so a low or
+            // zero quota can't exclude a qualifying doctor from their fair share.
             // HARD: OPD ward cap — never exceeded, even by auto-fill.
             if (isOpdStation(station) && d.opdMax != null && opdCount[d.id] >= d.opdMax) return false
             if (shift === 'night' && weekday === 5 && fridayNightCount[d.id] >= 2) return false
@@ -790,11 +810,34 @@ export function generateRoster(
               const bL = isOnLeave(b.id, day) ? 1 : 0
               if (aL !== bL) return aL - bL
             }
+            // HARD: Cath Lab duties are shared equally across the eligible pool.
+            // The doctor with the fewest Cath duties so far always comes first,
+            // ahead of every other placement bias, so the load stays balanced.
+            if (station.wards.includes('Cath') && cathCount[a.id] !== cathCount[b.id]) {
+              return cathCount[a.id] - cathCount[b.id]
+            }
             // First Man priority applies only at their priority wards — elsewhere
             // (e.g. Observation) they shouldn't be preferred, or they hog the ward.
             if (station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) {
               const aFM = isFirstMan(a) ? 1 : 0, bFM = isFirstMan(b) ? 1 : 0
               if (bFM !== aFM) return bFM - aFM
+            }
+            // Second Man: they partner SMO/First Man in 3A, 7 and DS 15A (the wards
+            // that need two doctors every day). Prefer them there; everywhere else
+            // push them to the back so they stay reserved for those wards (they are
+            // still eligible as an MO fallback, just picked last).
+            {
+              const inSecondWard = station.wards.some(w => SECOND_MAN_WARDS.includes(w))
+              const a2 = isSecondMan(a) ? 1 : 0, b2 = isSecondMan(b) ? 1 : 0
+              if (a2 !== b2) return inSecondWard ? b2 - a2 : a2 - b2
+            }
+            // Observation Second Man: they help the EMO in Observation and are also
+            // prioritised on the Ward 9 + Cabin night duty. Prefer them in those
+            // contexts; reserve them (pick last) elsewhere.
+            {
+              const inObsCtx = station.wards.includes('Observation') || (shift === 'night' && is9CabinStation(station))
+              const aO = isObsSecondMan(a) ? 1 : 0, bO = isObsSecondMan(b) ? 1 : 0
+              if (aO !== bO) return inObsCtx ? bO - aO : aO - bO
             }
             // Spread a ward across doctors: strongly prefer whoever worked this
             // ward longest ago (or never), so nobody is stuck on the same ward day
@@ -830,8 +873,13 @@ export function generateRoster(
               if (threeACount[a.id] !== threeACount[b.id]) return threeACount[a.id] - threeACount[b.id]
             }
             if (station.wards.includes('7')) {
-              const aReserve = isSMO(a) && threeACount[a.id] < 3 ? 1 : 0
-              const bReserve = isSMO(b) && threeACount[b.id] < 3 ? 1 : 0
+              // SMOs are primarily 3A seniors, so hold them back from Ward 7 —
+              // but only those actually appointed to 3A. An SMO whose preferred
+              // wards are set and don't include 3A isn't a 3A doctor, so they are
+              // free to take Ward 7 like anyone else.
+              const is3ASmo = (d: Doctor) => isSMO(d) && (!d.preferredWards?.length || d.preferredWards.includes('3A'))
+              const aReserve = is3ASmo(a) && threeACount[a.id] < 3 ? 1 : 0
+              const bReserve = is3ASmo(b) && threeACount[b.id] < 3 ? 1 : 0
               if (aReserve !== bReserve) return aReserve - bReserve
               if (ward7Count[a.id] !== ward7Count[b.id]) return ward7Count[a.id] - ward7Count[b.id]
             }

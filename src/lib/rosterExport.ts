@@ -150,7 +150,7 @@ const TEMPLATE_BLOCKS: TemplateBlock[] = [
       { label: 'W-5B', wards: ['5B'], width: 1 }, { label: 'W-5D', wards: ['5D'], width: 1 },
       { label: 'W- A+C', wards: ['5A', '5C'], width: 1 }, { label: 'W-9+Cabin', wards: ['9', 'Cabin'], width: 1 },
       { label: 'W-10', wards: ['10'], width: 1 }, { label: 'W-12', wards: ['12'], width: 1 },
-      { label: 'DS 15A', wards: ['DS 15A'], width: 2 }, { label: 'DS 15B', wards: ['DS 15B'], width: 1 },
+      { label: 'DS 15A & 15B', wards: ['DS 15A', 'DS 15B'], width: 2 },
       { label: 'DS 15C', wards: ['DS 15C'], width: 1 }, { label: 'DS W-8', wards: ['DS 8'], width: 1 },
       { label: 'DS W-9A', wards: ['DS 9A'], width: 1 }, { label: 'DS W-9B', wards: ['DS 9B'], width: 2 },
     ],
@@ -158,7 +158,7 @@ const TEMPLATE_BLOCKS: TemplateBlock[] = [
   {
     shift: 'night', title: 'Night (9:00 PM-8:00 AM)', cols: [
       { label: 'Observation', wards: ['Observation'], width: 1 }, { label: 'W-7(CCU-2)', wards: ['7'], width: 2 },
-      { label: 'W-3A', wards: ['3A'], width: 1 }, { label: 'W3B', wards: ['3B'], width: 1 },
+      { label: 'W-3A & 3B', wards: ['3A', '3B'], width: 2 },
       { label: 'W5A+B', wards: ['5A', '5B'], width: 1 }, { label: 'W5C+D', wards: ['5C', '5D'], width: 1 },
       { label: 'W9+Cabin+ Obs', wards: ['9', 'Cabin'], width: 1 }, { label: 'W10+12', wards: ['10', '12'], width: 1 },
       { label: 'DS15A', wards: ['DS 15A'], width: 1 }, { label: 'DS15B', wards: ['DS 15B'], width: 1 },
