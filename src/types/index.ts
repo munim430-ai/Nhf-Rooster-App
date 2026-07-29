@@ -1,4 +1,4 @@
-export type Category = 'SMO' | 'EMO' | 'MO' | 'First Man' | 'Resident';
+export type Category = 'SMO' | 'EMO' | 'MO' | 'First Man' | 'Resident' | 'Second Man' | 'Observation Second Man';
 export type Gender = 'male' | 'female';
 export type Shift = 'morning' | 'evening' | 'night';
 export type DemandKind = 'off' | 'double' | 'single' | 'leave' | 'assign';
@@ -191,7 +191,7 @@ export const SHIFT_LABEL: Record<Shift, string> = {
   night: 'Night (21:00–08:00)',
 };
 
-export const CATEGORY_OPTIONS: Category[] = ['SMO','EMO','MO','First Man','Resident'];
+export const CATEGORY_OPTIONS: Category[] = ['SMO','EMO','MO','First Man','Resident','Second Man','Observation Second Man'];
 
 export const GENDER_OPTIONS: Gender[] = ['male','female'];
 
@@ -209,22 +209,24 @@ export const WARD_DISPLAY_LABEL: Record<string, string> = {
 
 export const SLOT_COMPOSITION: SlotComposition = {
   'Observation': {
-    morning: [{ cats: ['EMO'] }, { cats: ['MO'] }],
-    evening: [{ cats: ['EMO'] }, { cats: ['MO'] }],
+    // EMO leads; an Observation Second Man helps when two are needed (else an MO).
+    morning: [{ cats: ['EMO'] }, { cats: ['Observation Second Man'], fallback: ['MO'] }],
+    evening: [{ cats: ['EMO'] }, { cats: ['Observation Second Man'], fallback: ['MO'] }],
     night: [{ cats: ['EMO'] }],
   },
   '3A': {
-    morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['SMO','EMO'] }],
-    evening: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['SMO','EMO'] }],
+    // Senior (SMO/First Man) leads; a Second Man partners them (else an MO).
+    morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
+    evening: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
   },
   'DS 15A': {
-    morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['SMO','EMO'] }],
-    evening: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['SMO','EMO'] }],
+    morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
+    evening: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
   },
   '7': {
-    morning: [{ cats: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
-    evening: [{ cats: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
-    night: [{ cats: ['SMO','First Man'] }, { cats: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
+    morning: [{ cats: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
+    evening: [{ cats: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
+    night: [{ cats: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['First Man','SMO','EMO'] }],
   },
 };
 

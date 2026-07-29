@@ -8,6 +8,9 @@ import {
 } from '@/types'
 import { isHolidayDay, monthKey } from '@/lib/utils'
 
+// Wards that need two doctors every day, where a Second Man partners the senior.
+const SECOND_MAN_WARDS = ['3A', '7', 'DS 15A']
+
 export interface GenerationResult {
   roster: RosterEntry
   effectiveStations: EffectiveStations
@@ -259,6 +262,12 @@ export function generateRoster(
   }
   function isResident(d: Doctor): boolean {
     return d.categories.includes('Resident')
+  }
+  function isSecondMan(d: Doctor): boolean {
+    return d.categories.includes('Second Man')
+  }
+  function isObsSecondMan(d: Doctor): boolean {
+    return d.categories.includes('Observation Second Man')
   }
   // A plain MO — not SMO/EMO/First Man.
   function isPureMO(d: Doctor): boolean {
@@ -795,6 +804,23 @@ export function generateRoster(
             if (station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) {
               const aFM = isFirstMan(a) ? 1 : 0, bFM = isFirstMan(b) ? 1 : 0
               if (bFM !== aFM) return bFM - aFM
+            }
+            // Second Man: they partner SMO/First Man in 3A, 7 and DS 15A (the wards
+            // that need two doctors every day). Prefer them there; everywhere else
+            // push them to the back so they stay reserved for those wards (they are
+            // still eligible as an MO fallback, just picked last).
+            {
+              const inSecondWard = station.wards.some(w => SECOND_MAN_WARDS.includes(w))
+              const a2 = isSecondMan(a) ? 1 : 0, b2 = isSecondMan(b) ? 1 : 0
+              if (a2 !== b2) return inSecondWard ? b2 - a2 : a2 - b2
+            }
+            // Observation Second Man: they help the EMO in Observation and are also
+            // prioritised on the Ward 9 + Cabin night duty. Prefer them in those
+            // contexts; reserve them (pick last) elsewhere.
+            {
+              const inObsCtx = station.wards.includes('Observation') || (shift === 'night' && is9CabinStation(station))
+              const aO = isObsSecondMan(a) ? 1 : 0, bO = isObsSecondMan(b) ? 1 : 0
+              if (aO !== bO) return inObsCtx ? bO - aO : aO - bO
             }
             // Spread a ward across doctors: strongly prefer whoever worked this
             // ward longest ago (or never), so nobody is stuck on the same ward day
