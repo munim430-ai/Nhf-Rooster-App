@@ -150,7 +150,7 @@ const TEMPLATE_BLOCKS: TemplateBlock[] = [
       { label: 'W-5B', wards: ['5B'], width: 1 }, { label: 'W-5D', wards: ['5D'], width: 1 },
       { label: 'W- A+C', wards: ['5A', '5C'], width: 1 }, { label: 'W-9+Cabin', wards: ['9', 'Cabin'], width: 1 },
       { label: 'W-10', wards: ['10'], width: 1 }, { label: 'W-12', wards: ['12'], width: 1 },
-      { label: 'DS 15A', wards: ['DS 15A'], width: 2 }, { label: 'DS 15B', wards: ['DS 15B'], width: 1 },
+      { label: 'DS 15A & 15B', wards: ['DS 15A', 'DS 15B'], width: 2 },
       { label: 'DS 15C', wards: ['DS 15C'], width: 1 }, { label: 'DS W-8', wards: ['DS 8'], width: 1 },
       { label: 'DS W-9A', wards: ['DS 9A'], width: 1 }, { label: 'DS W-9B', wards: ['DS 9B'], width: 2 },
     ],

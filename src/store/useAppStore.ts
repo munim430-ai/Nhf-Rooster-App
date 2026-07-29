@@ -114,8 +114,9 @@ export const defaultStations: ShiftStations = {
     { id: uid(), label: 'OPD B', wards: ['OPD B'], needed: 1 },
     { id: uid(), label: 'OPD C', wards: ['OPD C'], needed: 1 },
     { id: uid(), label: 'OPD (HTN)', wards: ['HTN'], needed: 1 },
-    { id: uid(), label: 'DS 15A', wards: ['DS 15A'], needed: 2 },
-    { id: uid(), label: 'DS 15B', wards: ['DS 15B'], needed: 1 },
+    // DS 15A & 15B are combined in the evening — two doctors cover both
+    // (a First Man/SMO with a Second Man) instead of three.
+    { id: uid(), label: 'DS 15A & 15B', wards: ['DS 15A', 'DS 15B'], needed: 2 },
     { id: uid(), label: 'DS 15C', wards: ['DS 15C'], needed: 1 },
     { id: uid(), label: 'DS 9A', wards: ['DS 9A'], needed: 1 },
     { id: uid(), label: 'DS 9B', wards: ['DS 9B'], needed: 1 },
