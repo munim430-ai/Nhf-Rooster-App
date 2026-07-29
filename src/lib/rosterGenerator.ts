@@ -856,8 +856,13 @@ export function generateRoster(
               if (threeACount[a.id] !== threeACount[b.id]) return threeACount[a.id] - threeACount[b.id]
             }
             if (station.wards.includes('7')) {
-              const aReserve = isSMO(a) && threeACount[a.id] < 3 ? 1 : 0
-              const bReserve = isSMO(b) && threeACount[b.id] < 3 ? 1 : 0
+              // SMOs are primarily 3A seniors, so hold them back from Ward 7 —
+              // but only those actually appointed to 3A. An SMO whose preferred
+              // wards are set and don't include 3A isn't a 3A doctor, so they are
+              // free to take Ward 7 like anyone else.
+              const is3ASmo = (d: Doctor) => isSMO(d) && (!d.preferredWards?.length || d.preferredWards.includes('3A'))
+              const aReserve = is3ASmo(a) && threeACount[a.id] < 3 ? 1 : 0
+              const bReserve = is3ASmo(b) && threeACount[b.id] < 3 ? 1 : 0
               if (aReserve !== bReserve) return aReserve - bReserve
               if (ward7Count[a.id] !== ward7Count[b.id]) return ward7Count[a.id] - ward7Count[b.id]
             }

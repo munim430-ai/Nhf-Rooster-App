@@ -216,8 +216,10 @@ export const SLOT_COMPOSITION: SlotComposition = {
   },
   '3A': {
     // Senior (SMO/First Man) leads; a Second Man partners them (else an MO).
+    // At night 3A and 3B are combined onto this one senior + Second Man pair.
     morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
     evening: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
+    night: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],
   },
   'DS 15A': {
     morning: [{ cats: ['SMO'], fallback: ['SMO','First Man'] }, { cats: ['Second Man'], fallback: ['MO'], excludeCats: ['SMO','EMO'] }],

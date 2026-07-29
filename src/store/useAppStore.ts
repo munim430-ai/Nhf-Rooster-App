@@ -125,8 +125,8 @@ export const defaultStations: ShiftStations = {
   ],
   night: [
     { id: uid(), label: 'Observation', wards: ['Observation'], needed: 1 },
-    { id: uid(), label: '3A', wards: ['3A'], needed: 1 },
-    { id: uid(), label: '3B', wards: ['3B'], needed: 1 },
+    // 3A & 3B are combined at night — a First Man/SMO with a Second Man.
+    { id: uid(), label: '3A & 3B', wards: ['3A', '3B'], needed: 2 },
     { id: uid(), label: '5A & 5B', wards: ['5A','5B'], needed: 1 },
     { id: uid(), label: '5C & 5D', wards: ['5C','5D'], needed: 1 },
     { id: uid(), label: 'Ward 7', wards: ['7'], needed: 2 },
