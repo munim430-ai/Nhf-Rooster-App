@@ -273,14 +273,20 @@ export function generateRoster(
   function isPureMO(d: Doctor): boolean {
     return d.categories.includes('MO') && !isSMO(d) && !isEMO(d) && !isFirstMan(d)
   }
+  // HARD: only doctors who are BOTH marked Cath-eligible AND have Cath ticked in
+  // their ward restrictions may take a Cath Lab duty. Cath duties are then shared
+  // equally among exactly this pool.
+  function cathAllowed(d: Doctor): boolean {
+    return d.cathEligible && d.allowedWards.includes('Cath')
+  }
   // A station reserved for manual entry — all its wards are in reservedWards.
   function isReservedStation(station: Station): boolean {
     return reservedWards.size > 0 && station.wards.length > 0 && station.wards.every(w => reservedWards.has(w))
   }
   // May this doctor be AUTO-assigned to this station under the MO-only policy?
   function autoAssignable(d: Doctor, station: Station): boolean {
+    if (station.wards.includes('Cath')) return cathAllowed(d)
     if (!autoAssignMoOnly) return true
-    if (station.wards.includes('Cath') && d.cathEligible) return true
     return isPureMO(d)
   }
 
@@ -419,7 +425,7 @@ export function generateRoster(
     const key = [...station.wards].sort().join('|')
     if (staticEligibleCountCache[key] !== undefined) return staticEligibleCountCache[key]
     const count = activeDoctors.filter(d => {
-      if (station.wards.includes('Cath') && !d.cathEligible) return false
+      if (station.wards.includes('Cath') && !cathAllowed(d)) return false
       if (isObservationStation(station) && d.gender === 'female') return false
       if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
@@ -645,7 +651,7 @@ export function generateRoster(
         // Reserved wards / MO-only policy also apply to fixed assignments.
         if (isReservedStation(matchingStation)) return
         if (!autoAssignable(d, matchingStation)) return
-        if (matchingStation.wards.includes('Cath') && !d.cathEligible) return skip('not Cath-eligible.')
+        if (matchingStation.wards.includes('Cath') && !cathAllowed(d)) return skip('Cath needs Cath-eligible + Cath in ward restrictions.')
         if (shift === 'night' && is9CabinStation(matchingStation) && d.gender === 'female') return skip('Ward 9 + Cabin night duty is male-only.')
         if (isObservationStation(matchingStation) && d.gender === 'female') return skip('Observation is male-only.')
         if (shift === 'morning' && isResident(d)) return skip('Residents do not do morning duty.')
@@ -746,7 +752,7 @@ export function generateRoster(
                 || (dbl.en && ((fx.has('night') && shift === 'evening') || (fx.has('evening') && shift === 'night')))
               if (!okPair) return false
             }
-            if (station.wards.includes('Cath') && !d.cathEligible) return false
+            if (station.wards.includes('Cath') && !cathAllowed(d)) return false
             // HARD: Ward 9 + Cabin NIGHT duty is male-only.
             if (shift === 'night' && is9CabinStation(station) && d.gender === 'female') return false
             // HARD: Observation is male-only (all shifts).
@@ -798,6 +804,12 @@ export function generateRoster(
               const aL = isOnLeave(a.id, day) ? 1 : 0
               const bL = isOnLeave(b.id, day) ? 1 : 0
               if (aL !== bL) return aL - bL
+            }
+            // HARD: Cath Lab duties are shared equally across the eligible pool.
+            // The doctor with the fewest Cath duties so far always comes first,
+            // ahead of every other placement bias, so the load stays balanced.
+            if (station.wards.includes('Cath') && cathCount[a.id] !== cathCount[b.id]) {
+              return cathCount[a.id] - cathCount[b.id]
             }
             // First Man priority applies only at their priority wards — elsewhere
             // (e.g. Observation) they shouldn't be preferred, or they hog the ward.
