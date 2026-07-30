@@ -273,11 +273,11 @@ export function generateRoster(
   function isPureMO(d: Doctor): boolean {
     return d.categories.includes('MO') && !isSMO(d) && !isEMO(d) && !isFirstMan(d)
   }
-  // HARD: only doctors who are BOTH marked Cath-eligible AND have Cath ticked in
-  // their ward restrictions may take a Cath Lab duty. Cath duties are then shared
-  // equally among exactly this pool.
+  // HARD: only doctors who are Cath-eligible, have Cath ticked in their ward
+  // restrictions, AND are male may take a Cath Lab duty. Cath duties are then
+  // shared equally among exactly this pool.
   function cathAllowed(d: Doctor): boolean {
-    return d.cathEligible && d.allowedWards.includes('Cath')
+    return d.cathEligible && d.gender === 'male' && d.allowedWards.includes('Cath')
   }
   // A station reserved for manual entry — all its wards are in reservedWards.
   function isReservedStation(station: Station): boolean {
@@ -429,7 +429,9 @@ export function generateRoster(
       if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
       if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
       if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
-      if (d.allowedWards.length > 0 && !station.wards.some(w => d.allowedWards.includes(w))) return false
+      // HARD: a ward-restricted doctor must be appointed to EVERY ward of a
+      // station — so a Cabin-only doctor is never placed on a "9 + Cabin" duty.
+      if (d.allowedWards.length > 0 && !station.wards.every(w => d.allowedWards.includes(w))) return false
       return true
     }).length
     staticEligibleCountCache[key] = count
@@ -770,8 +772,10 @@ export function generateRoster(
             if (isSMO(d) && !station.wards.some(w => SMO_WARDS.includes(w))) return false
             if (isFirstMan(d) && !isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w))) return false
             if (isFirstMan(d) && isEMO(d) && !station.wards.some(w => FIRST_MAN_PRIORITY_WARDS.includes(w)) && !station.wards.includes('Observation')) return false
-            // HARD: ward check-marks (allowed wards).
-            if (d.allowedWards.length > 0 && !station.wards.some(w => d.allowedWards.includes(w))) return false
+            // HARD: ward check-marks (allowed wards) — must cover EVERY ward of a
+            // station, so a doctor is never placed on a combined duty (e.g. 9 +
+            // Cabin) that includes a ward they aren't appointed to.
+            if (d.allowedWards.length > 0 && !station.wards.every(w => d.allowedWards.includes(w))) return false
             if (isOff(d.id, day, weekday, shift)) return false
             if (!extra && isOnLeave(d.id, day)) return false
             // HARD: night-duty target is a cap — never exceeded, even by auto-fill.

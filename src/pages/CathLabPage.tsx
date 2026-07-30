@@ -39,7 +39,12 @@ export default function CathLabPage() {
     .filter(d => !search || d.name.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => Number(b.cathEligible) - Number(a.cathEligible) || a.name.localeCompare(b.name))
 
-  const toggleEligible = (d: Doctor) => updateDoctor.mutate({ ...d, cathEligible: !d.cathEligible })
+  // HARD rule: Cath Lab doctors are always male. Only male doctors can be marked
+  // Cath-eligible (an already-eligible non-male may still be unticked).
+  const toggleEligible = (d: Doctor) => {
+    if (!d.cathEligible && d.gender !== 'male') return
+    updateDoctor.mutate({ ...d, cathEligible: !d.cathEligible })
+  }
   const setQuota = (d: Doctor, q: number) => updateDoctor.mutate({ ...d, cathQuota: Math.max(0, q) })
 
   return (
@@ -117,12 +122,16 @@ export default function CathLabPage() {
                         <input
                           type="checkbox"
                           checked={d.cathEligible}
+                          disabled={!d.cathEligible && d.gender !== 'male'}
                           onChange={() => toggleEligible(d)}
-                          className="w-4 h-4 accent-[#0f6e5c]"
+                          className="w-4 h-4 accent-[#0f6e5c] disabled:opacity-40 disabled:cursor-not-allowed"
                         />
                       </td>
                       <td className="px-4 py-2.5">
                         <span className="font-medium text-[#16221f]">{d.name}</span>
+                        {!d.cathEligible && d.gender !== 'male' && (
+                          <span className="ml-1.5 text-[10px] text-[#a8742c]" title="Cath Lab doctors must be male">male only</span>
+                        )}
                         {d.secret && (
                           <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-[#2c2c2c] text-[#f4d35e] font-medium">SECRET</span>
                         )}
@@ -159,8 +168,8 @@ export default function CathLabPage() {
       )}
 
       <p className="text-[11px] text-[#5c6f6a] mt-3">
-        Tick a doctor to add them to the Cath Lab team; the monthly quota caps how many Cath duties the
-        generator gives them. {roster && 'Assigned turns red when it exceeds the quota.'}
+        Tick a doctor to add them to the Cath Lab team — Cath Lab doctors must be male, so only male doctors
+        can be marked eligible. {roster && 'Assigned turns red when it exceeds the quota.'}
       </p>
     </div>
   )
