@@ -948,9 +948,13 @@ export function generateRoster(
         const wardForComposition = station.wards.find(w => SLOT_COMPOSITION[w])
         const slots = wardForComposition ? SLOT_COMPOSITION[wardForComposition][shift] : undefined
 
-        if (slots && alreadyAssigned.length === 0) {
-          const filledIds: string[] = []
-          slots.slice(0, station.needed).forEach(slotRule => {
+        if (slots && remainingNeeded > 0) {
+          // Preserved duties (if any) count as filling the earlier slots; fill the
+          // REMAINING slots via the composition so e.g. a preserved senior still
+          // gets a proper non-senior 2nd-man partner (not another senior from the
+          // generic pass).
+          const filledIds: string[] = [...alreadyAssigned]
+          slots.slice(alreadyAssigned.length, station.needed).forEach(slotRule => {
             const catFilter = slotRule?.cats || null
             const fallbackFilter = slotRule?.fallback || null
             const excludeCats = slotRule?.excludeCats || null
